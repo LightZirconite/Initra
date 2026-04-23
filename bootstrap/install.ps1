@@ -27,7 +27,11 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-  Start-Process -FilePath $TargetExe -Verb RunAs -ArgumentList $argList | Out-Null
+  if ($CliArgs.Count -gt 0) {
+    Start-Process -FilePath $TargetExe -Verb RunAs -ArgumentList $argList | Out-Null
+  } else {
+    Start-Process -FilePath $TargetExe -Verb RunAs | Out-Null
+  }
   exit 0
 }
 
