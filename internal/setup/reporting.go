@@ -128,29 +128,48 @@ func printFinalSessionScreen(report SessionReport, interactive bool) {
 		title = "Initra session finished with pending work"
 	}
 	line := strings.Repeat("=", len(title)+8)
-	fmt.Println(line)
-	fmt.Printf("=== %s ===\n", title)
-	fmt.Println(line)
-	fmt.Printf("Status: %s\n", report.Status)
-	fmt.Printf("Installed: %d | Updated: %d | Already up to date: %d | Skipped: %d | Failed: %d\n", counters.Installed, counters.Updated, counters.AlreadyUpToDate, counters.Skipped, counters.Failed)
+	fmt.Println(termUI.blue(line))
+	fmt.Printf("%s\n", termUI.blue(termUI.bold("=== "+title+" ===")))
+	fmt.Println(termUI.blue(line))
+	fmt.Printf("%s %s\n", termUI.dim("Status:"), formatFinalStatus(report.Status))
+	fmt.Printf("%s %d | %s %d | %s %d | %s %d | %s %d\n",
+		termUI.green("Installed:"), counters.Installed,
+		termUI.cyan("Updated:"), counters.Updated,
+		termUI.yellow("Already up to date:"), counters.AlreadyUpToDate,
+		termUI.dim("Skipped:"), counters.Skipped,
+		termUI.red("Failed:"), counters.Failed,
+	)
 	if report.LogPath != "" {
-		fmt.Printf("Log: %s\n", report.LogPath)
+		fmt.Printf("%s %s\n", termUI.dim("Log:"), report.LogPath)
 	}
 	if report.ReportPath != "" {
-		fmt.Printf("Report: %s\n", report.ReportPath)
+		fmt.Printf("%s %s\n", termUI.dim("Report:"), report.ReportPath)
 	}
 	if report.Error != "" {
-		fmt.Printf("Error: %s\n", report.Error)
+		fmt.Printf("%s %s\n", termUI.red("Error:"), report.Error)
 	}
 	if len(report.Warnings) > 0 {
-		fmt.Println("Important notes:")
+		fmt.Println(termUI.yellow(termUI.bold("Important notes:")))
 		for _, warning := range report.Warnings {
-			fmt.Printf("  - %s\n", warning)
+			fmt.Printf("  %s %s\n", colorizeBullet("-"), warning)
 		}
 	}
 	if interactive {
 		fmt.Println()
-		fmt.Println("Press Enter to close this summary.")
+		fmt.Println(termUI.dim("Press Enter to close this summary."))
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	}
+}
+
+func formatFinalStatus(status string) string {
+	switch status {
+	case "success":
+		return termUI.green(status)
+	case "partial":
+		return termUI.yellow(status)
+	case "error":
+		return termUI.red(status)
+	default:
+		return status
 	}
 }

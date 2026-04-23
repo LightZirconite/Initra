@@ -12,26 +12,24 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 	reader := bufio.NewReader(os.Stdin)
 	profile := base.clone()
 
-	fmt.Println("Initra")
-	fmt.Println("------")
-	fmt.Println("Interactive setup profile")
-	fmt.Printf("Preset: %s\n", profile.Preset)
-	fmt.Printf("Target: %s/%s", env.OS, env.Arch)
+	printSection("Interactive Setup Profile")
+	fmt.Printf("%s %s\n", termUI.dim("Preset:"), termUI.bold(profile.Preset))
+	fmt.Printf("%s %s/%s", termUI.dim("Target:"), env.OS, env.Arch)
 	if env.OS == "windows" {
-		fmt.Printf(" | %s", env.Windows.ProductName)
+		fmt.Printf(" %s %s", termUI.dim("|"), env.Windows.ProductName)
 	} else if env.DistroName != "" {
-		fmt.Printf(" | %s", env.DistroName)
+		fmt.Printf(" %s %s", termUI.dim("|"), env.DistroName)
 	}
 	fmt.Println()
-	fmt.Println("Tip: press Enter to accept an item, or type n to skip it.")
+	fmt.Println(termUI.dim("Tip: press Enter to accept the default answer shown in the prompt."))
 	fmt.Println()
 
 	for _, category := range catalog.Categories {
 		if !categoryHasVisibleItems(catalog, category.ID, env, profile) {
 			continue
 		}
-		fmt.Printf("[%s]\n", category.Name)
-		fmt.Printf("  %s\n", category.Description)
+		fmt.Printf("%s\n", formatCategoryTitle(category.Name))
+		fmt.Printf("  %s\n", termUI.dim(category.Description))
 		fmt.Println()
 		manualIndex := 0
 		for _, item := range catalog.Items {
@@ -41,13 +39,13 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			badges := itemBadges(item, env)
 			if item.AutoApply {
 				if len(badges) > 0 {
-					fmt.Printf("  - %s  %s\n", item.Name, strings.Join(badges, " "))
+					fmt.Printf("  - %s  %s\n", item.Name, joinStyledBadges(badges))
 				} else {
 					fmt.Printf("  - %s\n", item.Name)
 				}
 			} else if len(badges) > 0 {
 				manualIndex++
-				fmt.Printf("  %s. %s  %s\n", strconv.Itoa(manualIndex), item.Name, strings.Join(badges, " "))
+				fmt.Printf("  %s. %s  %s\n", strconv.Itoa(manualIndex), item.Name, joinStyledBadges(badges))
 			} else {
 				manualIndex++
 				fmt.Printf("  %s. %s\n", strconv.Itoa(manualIndex), item.Name)
@@ -55,23 +53,23 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			if description := strings.TrimSpace(item.Description); description != "" {
 				fmt.Printf("     %s\n", description)
 			}
-			fmt.Printf("     Selection: %s\n", selectionStateForItem(item, profile))
+			fmt.Printf("     %s %s\n", termUI.dim("Selection:"), formatStatusLabel(selectionStateForItem(item, profile)))
 			if len(item.Notes) > 0 {
 				for _, note := range item.Notes {
 					note = strings.TrimSpace(note)
 					if note == "" {
 						continue
 					}
-					fmt.Printf("     Note: %s\n", note)
+					fmt.Printf("     %s %s\n", termUI.yellow("Note:"), note)
 				}
 			}
 			if item.AutoApply {
-				fmt.Println("     Automatic: runs automatically when supported.")
+				fmt.Println("     " + termUI.cyan("Automatic: runs automatically when supported."))
 				fmt.Println()
 				continue
 			}
 			if profile.Selected[item.ID] {
-				fmt.Println("     Preset: selected")
+				fmt.Println("     " + termUI.green("Preset: selected"))
 			}
 			defaultValue := defaultSelectionForItem(item, profile)
 			answer, err := promptYesNo(reader, "     Install?", defaultValue)
@@ -88,7 +86,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			} else {
 				profile.SelectionSource[item.ID] = selectionManualNo
 			}
-			fmt.Printf("     Final selection: %s\n", selectionStateForItem(item, profile))
+			fmt.Printf("     %s %s\n", termUI.dim("Final selection:"), formatStatusLabel(selectionStateForItem(item, profile)))
 			fmt.Println()
 		}
 		fmt.Println()
@@ -98,7 +96,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 		if !profile.Selected[item.ID] || len(item.Inputs) == 0 {
 			continue
 		}
-		fmt.Printf("%s settings:\n", item.Name)
+		fmt.Printf("%s\n", termUI.bold(item.Name+" settings:"))
 		if description := strings.TrimSpace(item.Description); description != "" {
 			fmt.Printf("  %s\n", description)
 		}
@@ -128,7 +126,7 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, 
 		suffix = "[y/Enter]"
 	}
 	for {
-		fmt.Printf("%s %s ", prompt, suffix)
+		fmt.Printf("%s %s ", formatPrompt(prompt), termUI.dim(suffix))
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return false, err
@@ -157,9 +155,9 @@ func defaultSelectionForItem(item Item, profile UserProfile) bool {
 
 func promptString(reader *bufio.Reader, prompt, defaultValue string) (string, error) {
 	if defaultValue == "" {
-		fmt.Printf("%s ", prompt)
+		fmt.Printf("%s ", formatPrompt(prompt))
 	} else {
-		fmt.Printf("%s [%s] ", prompt, defaultValue)
+		fmt.Printf("%s %s ", formatPrompt(prompt), termUI.dim("["+defaultValue+"]"))
 	}
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -234,6 +232,17 @@ func itemBadges(item Item, env Environment) []string {
 		badges = append(badges, "[auto]")
 	}
 	return badges
+}
+
+func joinStyledBadges(badges []string) string {
+	if len(badges) == 0 {
+		return ""
+	}
+	styled := make([]string, 0, len(badges))
+	for _, badge := range badges {
+		styled = append(styled, formatBadge(badge))
+	}
+	return strings.Join(styled, " ")
 }
 
 func hasAlternativePlatformBehavior(item Item, env Environment) bool {

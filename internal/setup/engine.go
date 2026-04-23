@@ -45,6 +45,7 @@ func Run(args []string, version string) error {
 		return err
 	}
 	logger.Println("detected environment", env.OS, env.Arch)
+	printAppBanner(env, version)
 
 	if opts.SelfUpdate {
 		return runSelfUpdate(context.Background(), env, logger, opts.BaseURL)
@@ -75,7 +76,7 @@ func Run(args []string, version string) error {
 		if err := saveJSON(opts.ExportProfilePath, profile); err != nil {
 			return fmt.Errorf("export profile: %w", err)
 		}
-		fmt.Printf("Profile exported to %s\n", opts.ExportProfilePath)
+		fmt.Printf("%s %s\n", termUI.green("Profile exported to"), opts.ExportProfilePath)
 	}
 
 	plan, err := buildPlan(catalog, env, profile, logger)
@@ -631,8 +632,7 @@ func describeResolvedAction(step ResolvedStep) string {
 
 func printSelectionSummary(catalog Catalog, env Environment, profile UserProfile) {
 	fmt.Println()
-	fmt.Println("Selection summary")
-	fmt.Println("-----------------")
+	printSection("Selection Summary")
 	for _, category := range catalog.Categories {
 		hasItems := false
 		for _, item := range catalog.Items {
@@ -640,10 +640,10 @@ func printSelectionSummary(catalog Catalog, env Environment, profile UserProfile
 				continue
 			}
 			if !hasItems {
-				fmt.Printf("[%s]\n", category.Name)
+				fmt.Printf("%s\n", formatCategoryTitle(category.Name))
 				hasItems = true
 			}
-			fmt.Printf("  - %s: %s\n", item.Name, selectionStateForItem(item, profile))
+			fmt.Printf("  %s %s: %s\n", colorizeBullet("-"), item.Name, formatStatusLabel(selectionStateForItem(item, profile)))
 		}
 	}
 	fmt.Println()
@@ -651,9 +651,8 @@ func printSelectionSummary(catalog Catalog, env Environment, profile UserProfile
 
 func printPlan(plan Plan) {
 	fmt.Println()
-	fmt.Println("Execution plan")
-	fmt.Println("--------------")
-	fmt.Printf("Preset: %s\n", plan.Preset)
+	printSection("Execution Plan")
+	fmt.Printf("%s %s\n", termUI.dim("Preset:"), termUI.bold(plan.Preset))
 	alreadyPresent := 0
 	alreadyUpToDate := 0
 	skipped := 0
@@ -670,25 +669,25 @@ func printPlan(plan Plan) {
 			runnable++
 		}
 	}
-	fmt.Printf("Summary: %d to run, %d already present, %d already up to date, %d skipped\n", runnable, alreadyPresent, alreadyUpToDate, skipped)
+	fmt.Printf("%s %d to run, %d already present, %d already up to date, %d skipped\n", termUI.bold("Summary:"), runnable, alreadyPresent, alreadyUpToDate, skipped)
 	if len(plan.Warnings) > 0 {
-		fmt.Println("Warnings:")
+		fmt.Println(termUI.yellow(termUI.bold("Warnings:")))
 		for _, warning := range uniqueStrings(plan.Warnings) {
-			fmt.Printf("  - %s\n", warning)
+			fmt.Printf("  %s %s\n", colorizeBullet("-"), warning)
 		}
 	}
-	fmt.Println("Steps:")
+	fmt.Println(termUI.bold("Steps:"))
 	currentPhase := ""
 	for _, step := range plan.Steps {
 		if step.Phase != currentPhase {
 			currentPhase = step.Phase
-			fmt.Printf("  [%s]\n", phaseDisplayName(step.Phase))
+			fmt.Printf("  %s\n", formatCategoryTitle(phaseDisplayName(step.Phase)))
 		}
 		status := step.EstimatedAction
 		if step.SkipReason != "" {
 			status = "skip: " + step.SkipReason
 		}
-		fmt.Printf("  - %s: %s (%s)\n", step.Item.Name, status, step.SelectionState)
+		fmt.Printf("  %s %s: %s %s\n", colorizeBullet("-"), step.Item.Name, formatPlanStatus(step, status), termUI.dim("("+step.SelectionState+")"))
 	}
 	fmt.Println()
 }
@@ -736,8 +735,8 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	if env.OS == "windows" {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println("Setup session is now active. The window is locked in strict focus mode.")
-		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
+		fmt.Println(termUI.yellow("Setup session is now active. The window is locked in strict focus mode."))
+		fmt.Println(termUI.dim("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows."))
 	}
 	defer stopHostedSession()
 
@@ -783,10 +782,10 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 
 		if step.Phase != currentPhase {
 			currentPhase = step.Phase
-			fmt.Printf("\n[%s]\n", phaseDisplayName(step.Phase))
+			fmt.Printf("\n%s\n", formatCategoryTitle(phaseDisplayName(step.Phase)))
 		}
 		currentRunnable++
-		fmt.Printf("==> [%d/%d] %s\n", currentRunnable, totalRunnable, step.Item.Name)
+		fmt.Printf("%s [%d/%d] %s\n", termUI.cyan("==>"), currentRunnable, totalRunnable, termUI.bold(step.Item.Name))
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
@@ -887,8 +886,8 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	if env.OS == "windows" {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println("Resumed setup session is active again. The window is locked in strict focus mode.")
-		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
+		fmt.Println(termUI.yellow("Resumed setup session is active again. The window is locked in strict focus mode."))
+		fmt.Println(termUI.dim("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows."))
 	}
 	defer stopHostedSession()
 	currentPhase := ""
@@ -901,9 +900,9 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		}
 		if step.Phase != currentPhase {
 			currentPhase = step.Phase
-			fmt.Printf("\n[%s]\n", phaseDisplayName(step.Phase))
+			fmt.Printf("\n%s\n", formatCategoryTitle(phaseDisplayName(step.Phase)))
 		}
-		fmt.Printf("==> [resume %d/%d] %s\n", idx+1, len(state.Plan.Steps), step.Item.Name)
+		fmt.Printf("%s [resume %d/%d] %s\n", termUI.cyan("==>"), idx+1, len(state.Plan.Steps), termUI.bold(step.Item.Name))
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
