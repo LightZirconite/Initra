@@ -108,6 +108,24 @@ items:
             packages: [firefox]
             requires: [linux, pacman]
 
+  - id: firefox-layout
+    name: Apply Initra Firefox Layout
+    category: browsers
+    description: Applies the bundled non-sensitive Firefox toolbar and UI layout to existing Firefox profiles.
+    platforms: [windows, linux]
+    notes:
+      - "This only applies UI layout preferences. It does not import logins, history or bookmarks."
+      - "If no Firefox profile exists yet, launch Firefox once and run this again."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: firefox_layout
+      linux:
+        methods:
+          - type: builtin
+            action: firefox_layout
+
   - id: chrome
     name: Google Chrome
     category: browsers

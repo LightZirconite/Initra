@@ -2,6 +2,7 @@ package setup
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,4 +41,26 @@ func TestMergePreset(t *testing.T) {
 	if preset.Values["mesh_url"] == "" {
 		t.Fatalf("expected light preset mesh_url")
 	}
+}
+
+func TestMergeManagedFirefoxBlock(t *testing.T) {
+	block := renderFirefoxLayoutUserJS(firefoxLayoutBundle{
+		StringPrefs: map[string]string{
+			"browser.toolbars.bookmarks.visibility": "always",
+		},
+	})
+
+	merged := mergeManagedFirefoxBlock("user_pref(\"foo\", true);\n", block)
+	if !containsString(merged, firefoxManagedBlockStart) {
+		t.Fatalf("expected managed block to be appended")
+	}
+
+	replaced := mergeManagedFirefoxBlock(merged, block)
+	if strings.Count(replaced, firefoxManagedBlockStart) != 1 {
+		t.Fatalf("expected managed block to be replaced in place")
+	}
+}
+
+func containsString(value, fragment string) bool {
+	return strings.Contains(value, fragment)
 }

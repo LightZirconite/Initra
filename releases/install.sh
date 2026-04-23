@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-BASE_URL="${INITRA_BASE_URL:-${SETUPCTL_BASE_URL:-https://git.justw.tf/LightZirconite/setup-win}}"
+BASE_URL="${INITRA_BASE_URL:-${SETUPCTL_BASE_URL:-https://git.justw.tf/LightZirconite/setup-win/raw/branch/main}}"
 BASE_URL="${BASE_URL%/}"
 BIN_DIR="${HOME}/.local/bin"
 BIN_PATH="${BIN_DIR}/initra"

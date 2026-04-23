@@ -40,11 +40,6 @@ func Run(args []string, version string) error {
 	}
 	defer logger.Close()
 
-	catalog, err := loadCatalog(paths.CatalogPath)
-	if err != nil {
-		return err
-	}
-
 	env, err := detectEnvironment()
 	if err != nil {
 		return err
@@ -53,6 +48,15 @@ func Run(args []string, version string) error {
 
 	if opts.SelfUpdate {
 		return runSelfUpdate(context.Background(), env, logger, opts.BaseURL)
+	}
+
+	if opts.CaptureFirefoxLayout {
+		return captureFirefoxLayoutToRepo(env)
+	}
+
+	catalog, err := loadCatalog(paths.CatalogPath)
+	if err != nil {
+		return err
 	}
 
 	if opts.Diagnose {
@@ -100,6 +104,7 @@ func parseCLI(args []string) (CLIOptions, error) {
 	fs.StringVar(&opts.Preset, "preset", "generic", "preset to start from (generic|light)")
 	fs.StringVar(&opts.ProfilePath, "profile", "", "load a profile JSON file")
 	fs.StringVar(&opts.ExportProfilePath, "export-profile", "", "export the resulting profile to JSON")
+	fs.BoolVar(&opts.CaptureFirefoxLayout, "capture-firefox-layout", false, "capture the current machine's non-sensitive Firefox UI layout into the repository assets")
 	fs.BoolVar(&opts.NonInteractive, "non-interactive", false, "run without prompts")
 	fs.BoolVar(&opts.Resume, "resume", false, "resume from the last saved execution state")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the plan without executing it")
@@ -713,6 +718,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 	switch step.Method.Action {
 	case "auto_refresh_rate":
 		return runAutoRefreshRate(ctx, env, logger)
+	case "firefox_layout":
+		return applyBundledFirefoxLayout(ctx, env, logger, baseURL)
 	case "office":
 		return runDirectInstall(ctx, env, logger, Method{
 			URL:      "https://c2rsetup.officeapps.live.com/c2r/download.aspx?ProductreleaseID=O365ProPlusRetail&platform=x64&language={{index .inputs \"office_language\"}}&version=O16GA",

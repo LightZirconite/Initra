@@ -9,26 +9,31 @@ Cross-platform workstation bootstrapper for Windows and Linux.
 Windows `Win+R`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/releases/install.ps1')))"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1')))"
 ```
 
 Windows `Win+R` with preset `light`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/releases/install.ps1'))) --preset light"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1'))) --preset light"
 ```
 
 Linux:
 
 ```bash
-curl -fsSL https://git.justw.tf/LightZirconite/setup-win/releases/install.sh | sh
+curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh
 ```
 
 Linux with preset `light`:
 
 ```bash
-curl -fsSL https://git.justw.tf/LightZirconite/setup-win/releases/install.sh | sh -s -- --preset light
+curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh -s -- --preset light
 ```
+
+Preset notes:
+
+- `generic` is the neutral base setup.
+- `light` is the broader personal preset. The name is historical; it is not the smaller preset.
 
 ## What To Publish
 
@@ -44,6 +49,7 @@ Expected release files:
 - `releases/checksums.txt`
 - `releases/catalog/catalog.yaml`
 - `releases/app/pack-emoji.ttf`
+- `releases/assets/firefox/layout/ui-layout.json`
 
 ## Local Use
 
@@ -68,6 +74,7 @@ dist/initra.exe --dry-run
 dist/initra.exe --diagnose
 dist/initra.exe --resume
 dist/initra.exe --self-update
+dist/initra.exe --capture-firefox-layout
 ```
 
 ## File Roles
@@ -78,6 +85,16 @@ dist/initra.exe --self-update
 - `install.sh` is only a Linux bootstrapper that downloads and launches the Linux binary.
 
 So there is not a separate “PowerShell version” and “shell version” of Initra itself. There is one native binary per OS, plus a tiny launcher script for each platform.
+
+## Firefox Layout
+
+Capture the current machine's non-sensitive Firefox UI layout into the repository:
+
+```powershell
+dist\initra.exe --capture-firefox-layout
+```
+
+This captures toolbar/button placement and a few safe UI prefs only. It does not export logins, cookies, browsing history, or bookmarks.
 
 ## Notes
 

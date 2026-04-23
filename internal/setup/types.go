@@ -13,27 +13,29 @@ import (
 )
 
 const (
-	appName                 = "Initra"
-	appSlug                 = "initra"
-	catalogRelativePath     = "catalog/catalog.yaml"
-	defaultReleaseBaseURL   = "https://git.justw.tf/LightZirconite/setup-win"
-	defaultLatestManifest   = defaultReleaseBaseURL + "/releases/latest.json"
-	stateFileName           = "state.json"
-	defaultProfileFileName  = "profile.json"
-	restorePointDescription = "Initra pre-change checkpoint"
+	appName                   = "Initra"
+	appSlug                   = "initra"
+	catalogRelativePath       = "catalog/catalog.yaml"
+	firefoxLayoutRelativePath = "assets/firefox/layout/ui-layout.json"
+	defaultReleaseBaseURL     = "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main"
+	defaultLatestManifest     = defaultReleaseBaseURL + "/releases/latest.json"
+	stateFileName             = "state.json"
+	defaultProfileFileName    = "profile.json"
+	restorePointDescription   = "Initra pre-change checkpoint"
 )
 
 type CLIOptions struct {
-	Preset            string
-	ProfilePath       string
-	ExportProfilePath string
-	NonInteractive    bool
-	Resume            bool
-	DryRun            bool
-	SelfUpdate        bool
-	Diagnose          bool
-	BaseURL           string
-	StatePath         string
+	Preset               string
+	ProfilePath          string
+	ExportProfilePath    string
+	CaptureFirefoxLayout bool
+	NonInteractive       bool
+	Resume               bool
+	DryRun               bool
+	SelfUpdate           bool
+	Diagnose             bool
+	BaseURL              string
+	StatePath            string
 }
 
 type Paths struct {

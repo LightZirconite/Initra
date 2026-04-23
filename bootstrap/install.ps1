@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $baseOverride = if ($env:INITRA_BASE_URL) { $env:INITRA_BASE_URL } else { $env:SETUPCTL_BASE_URL }
-$BaseUrl = if ($baseOverride) { $baseOverride.TrimEnd('/') } else { "https://git.justw.tf/LightZirconite/setup-win" }
+$BaseUrl = if ($baseOverride) { $baseOverride.TrimEnd('/') } else { "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main" }
 $BinaryUrl = "$BaseUrl/releases/initra-windows-amd64.exe"
 $TargetDir = Join-Path $env:TEMP "initra"
 $CatalogDir = Join-Path $TargetDir "catalog"

@@ -6,12 +6,14 @@ cd /d "%ROOT%"
 
 set "BASE_URL=%INITRA_BASE_URL%"
 if not defined BASE_URL set "BASE_URL=%SETUPCTL_BASE_URL%"
-if not defined BASE_URL set "BASE_URL=https://git.justw.tf/LightZirconite/setup-win"
+if not defined BASE_URL set "BASE_URL=https://git.justw.tf/LightZirconite/setup-win/raw/branch/main"
 set "RELEASE_DIR=%ROOT%releases"
 set "WIN_BIN=%RELEASE_DIR%\initra-windows-amd64.exe"
 set "LINUX_BIN=%RELEASE_DIR%\initra-linux-amd64"
 set "ASSET_DIR=%RELEASE_DIR%\app"
 set "CATALOG_DIR=%RELEASE_DIR%\catalog"
+set "FIREFOX_LAYOUT_SRC=%ROOT%assets\firefox\layout"
+set "FIREFOX_LAYOUT_DIR=%RELEASE_DIR%\assets\firefox\layout"
 set "MANIFEST=%RELEASE_DIR%\latest.json"
 set "CHECKSUMS=%RELEASE_DIR%\checksums.txt"
 
@@ -35,6 +37,7 @@ if exist "%RELEASE_DIR%\setupctl-windows-amd64.exe" del /q "%RELEASE_DIR%\setupc
 if exist "%RELEASE_DIR%\setupctl-linux-amd64" del /q "%RELEASE_DIR%\setupctl-linux-amd64"
 if exist "%RELEASE_DIR%\app" rmdir /s /q "%RELEASE_DIR%\app"
 if exist "%RELEASE_DIR%\catalog" rmdir /s /q "%RELEASE_DIR%\catalog"
+if exist "%RELEASE_DIR%\assets" rmdir /s /q "%RELEASE_DIR%\assets"
 
 echo [2/6] Building Windows binary...
 go build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o "%WIN_BIN%" ./cmd/setupctl
@@ -59,6 +62,13 @@ if errorlevel 1 goto :fail
 if not exist "%CATALOG_DIR%" mkdir "%CATALOG_DIR%"
 copy /Y "%ROOT%catalog\catalog.yaml" "%CATALOG_DIR%\catalog.yaml" >nul
 if errorlevel 1 goto :fail
+if exist "%FIREFOX_LAYOUT_SRC%" (
+  if not exist "%RELEASE_DIR%\assets" mkdir "%RELEASE_DIR%\assets"
+  if not exist "%RELEASE_DIR%\assets\firefox" mkdir "%RELEASE_DIR%\assets\firefox"
+  if not exist "%FIREFOX_LAYOUT_DIR%" mkdir "%FIREFOX_LAYOUT_DIR%"
+  copy /Y "%FIREFOX_LAYOUT_SRC%\*" "%FIREFOX_LAYOUT_DIR%\" >nul
+  if errorlevel 1 goto :fail
+)
 
 echo [5/6] Writing manifest and checksums...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
