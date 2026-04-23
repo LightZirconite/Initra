@@ -23,19 +23,21 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 		fmt.Printf(" | %s", env.DistroName)
 	}
 	fmt.Println()
-	fmt.Println("Tip: press Enter to keep the default choice.")
+	fmt.Println("Tip: press Enter to accept an item, or type n to skip it.")
 	fmt.Println()
 
 	for _, category := range catalog.Categories {
-		items := categoryItems(catalog, category.ID, env)
-		if len(items) == 0 {
+		if !categoryHasVisibleItems(catalog, category.ID, env, profile) {
 			continue
 		}
 		fmt.Printf("[%s]\n", category.Name)
 		fmt.Printf("  %s\n", category.Description)
 		fmt.Println()
 		manualIndex := 0
-		for _, item := range items {
+		for _, item := range catalog.Items {
+			if item.Category != category.ID || !itemVisibleOn(item, env) || !profileDependencySatisfied(item, profile) {
+				continue
+			}
 			badges := itemBadges(item, env)
 			if item.AutoApply {
 				if len(badges) > 0 {
@@ -68,9 +70,9 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 				continue
 			}
 			if profile.Selected[item.ID] {
-				fmt.Println("     Default: selected")
+				fmt.Println("     Preset: selected")
 			}
-			defaultValue := profile.Selected[item.ID]
+			defaultValue := true
 			answer, err := promptYesNo(reader, "     Install?", defaultValue)
 			if err != nil {
 				return profile, err
@@ -110,9 +112,9 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, error) {
-	suffix := "[y/N]"
+	suffix := "[Enter/n]"
 	if defaultValue {
-		suffix = "[Y/n]"
+		suffix = "[Enter/n]"
 	}
 	for {
 		fmt.Printf("%s %s ", prompt, suffix)
@@ -130,7 +132,7 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, 
 		case "n", "no":
 			return false, nil
 		}
-		fmt.Println("Please answer y or n.")
+		fmt.Println("Press Enter to accept, or type n to refuse.")
 	}
 }
 
@@ -156,14 +158,13 @@ func confirmExecution() (bool, error) {
 	return promptYesNo(reader, "Proceed with execution?", true)
 }
 
-func categoryItems(catalog Catalog, categoryID string, env Environment) []Item {
-	items := make([]Item, 0)
+func categoryHasVisibleItems(catalog Catalog, categoryID string, env Environment, profile UserProfile) bool {
 	for _, item := range catalog.Items {
-		if item.Category == categoryID && itemVisibleOn(item, env) {
-			items = append(items, item)
+		if item.Category == categoryID && itemVisibleOn(item, env) && profileDependencySatisfied(item, profile) {
+			return true
 		}
 	}
-	return items
+	return false
 }
 
 func resolveDefaultInput(input InputSpec, profile UserProfile, env Environment) string {

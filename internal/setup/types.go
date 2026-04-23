@@ -77,6 +77,7 @@ type Item struct {
 	Description   string                 `yaml:"description"`
 	Platforms     []string               `yaml:"platforms"`
 	AutoApply     bool                   `yaml:"auto_apply"`
+	DependsOn     []string               `yaml:"depends_on"`
 	RequiresAdmin bool                   `yaml:"requires_admin"`
 	Notes         []string               `yaml:"notes"`
 	Inputs        []InputSpec            `yaml:"inputs"`
@@ -173,6 +174,7 @@ type Plan struct {
 
 type ResolvedStep struct {
 	Item            Item              `json:"item"`
+	Phase           string            `json:"phase"`
 	Method          Method            `json:"method"`
 	Inputs          map[string]string `json:"inputs"`
 	SkipReason      string            `json:"skip_reason,omitempty"`
@@ -182,16 +184,17 @@ type ResolvedStep struct {
 }
 
 type RunState struct {
-	Version       int       `json:"version"`
-	StartedAt     time.Time `json:"started_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	Plan          Plan      `json:"plan"`
-	NextStep      int       `json:"next_step"`
-	Completed     []string  `json:"completed"`
-	Warnings      []string  `json:"warnings"`
-	PendingReboot bool      `json:"pending_reboot"`
-	BinaryPath    string    `json:"binary_path"`
-	BaseURL       string    `json:"base_url"`
+	Version       int            `json:"version"`
+	StartedAt     time.Time      `json:"started_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	Plan          Plan           `json:"plan"`
+	NextStep      int            `json:"next_step"`
+	Completed     []string       `json:"completed"`
+	Warnings      []string       `json:"warnings"`
+	PendingReboot bool           `json:"pending_reboot"`
+	BinaryPath    string         `json:"binary_path"`
+	BaseURL       string         `json:"base_url"`
+	Attempts      map[string]int `json:"attempts,omitempty"`
 }
 
 type Logger struct {

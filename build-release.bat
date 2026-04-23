@@ -12,6 +12,7 @@ set "WIN_BIN=%RELEASE_DIR%\initra-windows-amd64.exe"
 set "LINUX_BIN=%RELEASE_DIR%\initra-linux-amd64"
 set "ASSET_DIR=%RELEASE_DIR%\app"
 set "CATALOG_DIR=%RELEASE_DIR%\catalog"
+set "RUNTIME_ASSET_DIR=%RELEASE_DIR%\assets"
 set "FIREFOX_LAYOUT_SRC=%ROOT%assets\firefox\layout"
 set "FIREFOX_LAYOUT_DIR=%RELEASE_DIR%\assets\firefox\layout"
 set "MANIFEST=%RELEASE_DIR%\latest.json"
@@ -57,16 +58,46 @@ if errorlevel 1 goto :fail
 copy /Y "%ROOT%bootstrap\install.sh" "%RELEASE_DIR%\install.sh" >nul
 if errorlevel 1 goto :fail
 if not exist "%ASSET_DIR%" mkdir "%ASSET_DIR%"
-copy /Y "%ROOT%app\pack-emoji.ttf" "%ASSET_DIR%\pack-emoji.ttf" >nul
-if errorlevel 1 goto :fail
+if exist "%ROOT%app\pack-emoji.ttf" (
+  copy /Y "%ROOT%app\pack-emoji.ttf" "%ASSET_DIR%\pack-emoji.ttf" >nul
+  if errorlevel 1 goto :fail
+)
 if not exist "%CATALOG_DIR%" mkdir "%CATALOG_DIR%"
 copy /Y "%ROOT%catalog\catalog.yaml" "%CATALOG_DIR%\catalog.yaml" >nul
 if errorlevel 1 goto :fail
+if not exist "%RUNTIME_ASSET_DIR%" mkdir "%RUNTIME_ASSET_DIR%"
+if exist "%ROOT%assets\wallpaper.png" (
+  copy /Y "%ROOT%assets\wallpaper.png" "%RUNTIME_ASSET_DIR%\wallpaper.png" >nul
+  if errorlevel 1 goto :fail
+)
 if exist "%FIREFOX_LAYOUT_SRC%" (
-  if not exist "%RELEASE_DIR%\assets" mkdir "%RELEASE_DIR%\assets"
   if not exist "%RELEASE_DIR%\assets\firefox" mkdir "%RELEASE_DIR%\assets\firefox"
   if not exist "%FIREFOX_LAYOUT_DIR%" mkdir "%FIREFOX_LAYOUT_DIR%"
   copy /Y "%FIREFOX_LAYOUT_SRC%\*" "%FIREFOX_LAYOUT_DIR%\" >nul
+  if errorlevel 1 goto :fail
+)
+for %%F in ("%ROOT%app\marketplace-settings*.json") do (
+  if exist "%%~fF" (
+    copy /Y "%%~fF" "%ASSET_DIR%\marketplace-settings.json" >nul
+    if errorlevel 1 goto :fail
+    goto :marketplace_done
+  )
+)
+:marketplace_done
+for %%F in ("%ROOT%app\vencord-settings*.json") do (
+  if exist "%%~fF" (
+    copy /Y "%%~fF" "%ASSET_DIR%\vencord-settings.json" >nul
+    if errorlevel 1 goto :fail
+    goto :vencord_done
+  )
+)
+:vencord_done
+if exist "%ROOT%app\spicetify-config-xpui.ini" (
+  copy /Y "%ROOT%app\spicetify-config-xpui.ini" "%ASSET_DIR%\spicetify-config-xpui.ini" >nul
+  if errorlevel 1 goto :fail
+)
+if exist "%ROOT%app\vencord-quickCss.css" (
+  copy /Y "%ROOT%app\vencord-quickCss.css" "%ASSET_DIR%\vencord-quickCss.css" >nul
   if errorlevel 1 goto :fail
 )
 

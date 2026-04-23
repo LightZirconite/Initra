@@ -31,15 +31,23 @@ func TestMergePreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCatalog() error = %v", err)
 	}
-	preset, err := mergePreset(catalog, "light")
+	preset, err := mergePreset(catalog, "personal")
 	if err != nil {
 		t.Fatalf("mergePreset() error = %v", err)
 	}
 	if !contains(preset.Selected, "mesh-agent") {
-		t.Fatalf("expected light preset to include mesh-agent")
+		t.Fatalf("expected personal preset to include mesh-agent")
 	}
 	if preset.Values["mesh_url"] == "" {
-		t.Fatalf("expected light preset mesh_url")
+		t.Fatalf("expected personal preset mesh_url")
+	}
+
+	alias, err := mergePreset(catalog, "light")
+	if err != nil {
+		t.Fatalf("mergePreset(light) error = %v", err)
+	}
+	if !contains(alias.Selected, "mesh-agent") {
+		t.Fatalf("expected light alias preset to include mesh-agent")
 	}
 }
 
@@ -63,4 +71,49 @@ func TestMergeManagedFirefoxBlock(t *testing.T) {
 
 func containsString(value, fragment string) bool {
 	return strings.Contains(value, fragment)
+}
+
+func TestSortPlanByPhase(t *testing.T) {
+	plan := Plan{
+		Steps: []ResolvedStep{
+			{Item: Item{ID: "theme-dark"}, Phase: phasePostUpdate},
+			{Item: Item{ID: "windows-update"}, Phase: phaseMaintenance},
+			{Item: Item{ID: "spotify"}, Phase: phaseApplications},
+		},
+	}
+	sortPlanByPhase(&plan)
+	got := []string{plan.Steps[0].Item.ID, plan.Steps[1].Item.ID, plan.Steps[2].Item.ID}
+	want := []string{"spotify", "windows-update", "theme-dark"}
+	for idx := range want {
+		if got[idx] != want[idx] {
+			t.Fatalf("unexpected order: got %v want %v", got, want)
+		}
+	}
+}
+
+func TestUnwrapVencordSettings(t *testing.T) {
+	raw := []byte(`{"settings":{"foo":true,"bar":{"baz":"qux"}}}`)
+	unwrapped, err := unwrapVencordSettings(raw)
+	if err != nil {
+		t.Fatalf("unwrapVencordSettings() error = %v", err)
+	}
+	text := string(unwrapped)
+	if !strings.Contains(text, `"foo": true`) {
+		t.Fatalf("expected foo setting in unwrapped payload, got %s", text)
+	}
+	if strings.Contains(text, `"settings"`) {
+		t.Fatalf("expected wrapper key to be removed, got %s", text)
+	}
+}
+
+func TestProfileDependencySatisfied(t *testing.T) {
+	item := Item{ID: "spicetify-marketplace", DependsOn: []string{"spotify"}}
+	profile := newProfile("generic")
+	if profileDependencySatisfied(item, profile) {
+		t.Fatalf("expected dependency to be unsatisfied when spotify is not selected")
+	}
+	profile.Selected["spotify"] = true
+	if !profileDependencySatisfied(item, profile) {
+		t.Fatalf("expected dependency to be satisfied when spotify is selected")
+	}
 }

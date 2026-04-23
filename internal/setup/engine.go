@@ -101,7 +101,7 @@ func Run(args []string, version string) error {
 func parseCLI(args []string) (CLIOptions, error) {
 	var opts CLIOptions
 	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-	fs.StringVar(&opts.Preset, "preset", "generic", "preset to start from (generic|light)")
+	fs.StringVar(&opts.Preset, "preset", "generic", "preset to start from (generic|personal)")
 	fs.StringVar(&opts.ProfilePath, "profile", "", "load a profile JSON file")
 	fs.StringVar(&opts.ExportProfilePath, "export-profile", "", "export the resulting profile to JSON")
 	fs.BoolVar(&opts.CaptureFirefoxLayout, "capture-firefox-layout", false, "capture the current machine's non-sensitive Firefox UI layout into the repository assets")
@@ -160,6 +160,9 @@ func buildPlan(catalog Catalog, env Environment, profile UserProfile, logger *Lo
 	}
 
 	for _, item := range catalog.Items {
+		if len(item.DependsOn) > 0 && !profileDependencySatisfied(item, profile) {
+			continue
+		}
 		if !item.AutoApply && !profile.Selected[item.ID] {
 			continue
 		}
@@ -168,11 +171,13 @@ func buildPlan(catalog Catalog, env Environment, profile UserProfile, logger *Lo
 		if err != nil {
 			return plan, err
 		}
-		if item.RequiresAdmin && (strings.HasPrefix(item.ID, "tweak-") || strings.HasPrefix(item.ID, "feature-") || item.ID == "defender-exclude") {
+		step.Phase = phaseForItem(item)
+		if phaseNeedsRestore(step) {
 			plan.NeedsRestore = runtime.GOOS == "windows"
 		}
 		plan.Steps = append(plan.Steps, step)
 	}
+	sortPlanByPhase(&plan)
 
 	return plan, nil
 }
@@ -218,6 +223,18 @@ func resolveStep(item Item, env Environment, profile UserProfile, logger *Logger
 	return step, warnings, nil
 }
 
+func profileDependencySatisfied(item Item, profile UserProfile) bool {
+	if len(item.DependsOn) == 0 {
+		return true
+	}
+	for _, dep := range item.DependsOn {
+		if profile.Selected[dep] {
+			return true
+		}
+	}
+	return false
+}
+
 func extraItemWarnings(item Item, env Environment, inputs map[string]string) []string {
 	warnings := []string{}
 	switch item.ID {
@@ -245,7 +262,7 @@ func extraItemWarnings(item Item, env Environment, inputs map[string]string) []s
 		}
 	case "theme-dark":
 		if env.OS == "linux" {
-			warnings = append(warnings, "Linux dark theme is currently automated for GNOME-based desktops only.")
+			warnings = append(warnings, "Linux dark theme is automated for GNOME and KDE Plasma sessions when their native tooling is available.")
 		}
 	case "auto-refresh-rate":
 		if env.OS == "linux" {
@@ -257,6 +274,8 @@ func extraItemWarnings(item Item, env Environment, inputs map[string]string) []s
 		warnings = append(warnings, "Remote Desktop is enabled without changing NLA. Initra does not weaken that protection automatically.")
 	case "emoji-font-pack":
 		warnings = append(warnings, "The Windows 10 emoji font pack requires a reboot before it is fully applied.")
+	case "vencord":
+		warnings = append(warnings, "Vencord modifies Discord in a way that can violate Discord's terms of service.")
 	}
 	return warnings
 }
@@ -405,7 +424,12 @@ func printPlan(plan Plan) {
 		}
 	}
 	fmt.Println("Steps:")
+	currentPhase := ""
 	for _, step := range plan.Steps {
+		if step.Phase != currentPhase {
+			currentPhase = step.Phase
+			fmt.Printf("  [%s]\n", phaseDisplayName(step.Phase))
+		}
 		status := step.EstimatedAction
 		if step.AlreadyPresent {
 			status = "already present"
@@ -420,17 +444,29 @@ func printPlan(plan Plan) {
 
 func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, logger *Logger, baseURL string) error {
 	state := RunState{
-		Version:    1,
+		Version:    2,
 		StartedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 		Plan:       plan,
 		NextStep:   0,
 		BinaryPath: currentBinaryPath(),
 		BaseURL:    baseURL,
+		Attempts:   map[string]int{},
 	}
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
+	if err := waitForNetwork(ctx, logger, baseURL); err != nil {
+		return err
+	}
+	stopHostedSession := func() {}
+	if env.OS == "windows" {
+		_ = prepareHostedWindowsSession(ctx, logger)
+		stopHostedSession = startHostedSessionController(logger)
+		fmt.Println("Setup session is now active. The window is maximized and kept on top.")
+		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
+	}
+	defer stopHostedSession()
 
 	if env.OS == "windows" && selectedNeedsWinget(plan) {
 		if err := ensureWinget(ctx, env, logger); err != nil {
@@ -446,6 +482,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		}
 	}
 	currentRunnable := 0
+	currentPhase := ""
 	for idx := range plan.Steps {
 		step := plan.Steps[idx]
 		if step.AlreadyPresent || step.SkipReason != "" {
@@ -462,26 +499,49 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 			restoreCreated = true
 		}
 
+		if step.Phase != currentPhase {
+			currentPhase = step.Phase
+			fmt.Printf("\n[%s]\n", phaseDisplayName(step.Phase))
+		}
 		currentRunnable++
 		fmt.Printf("==> [%d/%d] %s\n", currentRunnable, totalRunnable, step.Item.Name)
+		stepKey := stepStateKey(step)
+		state.Attempts[stepKey]++
 		if err := executeStep(ctx, step, env, logger, baseURL); err != nil {
 			return fmt.Errorf("%s: %w", step.Item.Name, err)
 		}
+
+		if env.OS == "windows" && isMaintenanceLoopStep(step) {
+			rebootPending, err := windowsRebootPending(ctx, logger)
+			if err == nil && rebootPending && state.Attempts[stepKey] < 4 {
+				state.PendingReboot = true
+				state.NextStep = idx
+				state.UpdatedAt = time.Now()
+				if err := persistRebootState(paths, logger, &state, "Windows requested another update reboot cycle. Initra will resume automatically."); err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+
 		if step.RequiresReboot {
 			state.PendingReboot = true
+			state.NextStep = idx + 1
+			state.UpdatedAt = time.Now()
+			if err := persistRebootState(paths, logger, &state, fmt.Sprintf("%s requires a reboot. Initra will resume automatically.", step.Item.Name)); err != nil {
+				return err
+			}
+			return nil
 		}
 		state.NextStep = idx + 1
 		state.Completed = append(state.Completed, step.Item.ID)
+		state.PendingReboot = false
 		state.UpdatedAt = time.Now()
 		if err := saveJSON(paths.StatePath, state); err != nil {
 			return err
 		}
 	}
 
-	if state.PendingReboot {
-		_ = setupResumeHook(paths, logger)
-		fmt.Println("A reboot is recommended. Resume support has been prepared when possible.")
-	}
 	_ = os.Remove(paths.StatePath)
 	_ = removeResumeHook(paths)
 	fmt.Println("Initra setup complete.")
@@ -500,17 +560,62 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	if state.BaseURL == "" {
 		state.BaseURL = baseURL
 	}
+	if state.Attempts == nil {
+		state.Attempts = map[string]int{}
+	}
+	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
+		return err
+	}
+	stopHostedSession := func() {}
+	if env.OS == "windows" {
+		_ = prepareHostedWindowsSession(ctx, logger)
+		stopHostedSession = startHostedSessionController(logger)
+		fmt.Println("Resumed setup session is active again. The window is maximized and kept on top.")
+		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
+	}
+	defer stopHostedSession()
+	currentPhase := ""
 	for idx := state.NextStep; idx < len(state.Plan.Steps); idx++ {
 		step := state.Plan.Steps[idx]
 		if step.AlreadyPresent || step.SkipReason != "" {
 			state.NextStep = idx + 1
 			continue
 		}
+		if step.Phase != currentPhase {
+			currentPhase = step.Phase
+			fmt.Printf("\n[%s]\n", phaseDisplayName(step.Phase))
+		}
 		fmt.Printf("==> [resume %d/%d] %s\n", idx+1, len(state.Plan.Steps), step.Item.Name)
+		stepKey := stepStateKey(step)
+		state.Attempts[stepKey]++
 		if err := executeStep(ctx, step, env, logger, state.BaseURL); err != nil {
 			return fmt.Errorf("resume %s: %w", step.Item.Name, err)
 		}
+
+		if env.OS == "windows" && isMaintenanceLoopStep(step) {
+			rebootPending, err := windowsRebootPending(ctx, logger)
+			if err == nil && rebootPending && state.Attempts[stepKey] < 4 {
+				state.PendingReboot = true
+				state.NextStep = idx
+				state.UpdatedAt = time.Now()
+				if err := persistRebootState(paths, logger, &state, "Windows requested another update reboot cycle. Initra will resume automatically."); err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+
+		if step.RequiresReboot {
+			state.PendingReboot = true
+			state.NextStep = idx + 1
+			state.UpdatedAt = time.Now()
+			if err := persistRebootState(paths, logger, &state, fmt.Sprintf("%s requires a reboot. Initra will resume automatically.", step.Item.Name)); err != nil {
+				return err
+			}
+			return nil
+		}
 		state.NextStep = idx + 1
+		state.PendingReboot = false
 		state.UpdatedAt = time.Now()
 		if err := saveJSON(paths.StatePath, state); err != nil {
 			return err
@@ -734,6 +839,12 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return installOpenWhispr(ctx, env, logger)
 	case "onedrive_linux":
 		return installOneDriveLinux(ctx, env, logger)
+	case "spicetify_marketplace":
+		return installSpicetifyMarketplace(ctx, env, logger, baseURL)
+	case "vencord":
+		return installVencord(ctx, env, logger, baseURL)
+	case "stoat":
+		return installStoat(ctx, env, logger)
 	case "windows_update":
 		return runWindowsMaintenance(ctx, env, logger)
 	case "driver_refresh":
@@ -752,6 +863,16 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return enableDualBootUTC(ctx, env, logger)
 	case "emoji_font_pack":
 		return installWindows10EmojiFont(ctx, env, logger, baseURL)
+	case "wallpaper":
+		return applyWallpaper(ctx, env, logger, baseURL)
+	case "firefox_policies":
+		return applyFirefoxPolicies(ctx, env, logger)
+	case "windows_default_apps":
+		return applyWindowsDefaultApps(ctx, env, logger)
+	case "windows_taskbar_cleanup":
+		return applyWindowsTaskbarCleanup(ctx, env, logger)
+	case "windows_startup_cleanup":
+		return runWindowsStartupCleanup(ctx, env, logger)
 	case "consumer_cleanup":
 		return runConsumerCleanup(ctx, env, logger)
 	case "tweak_privacy":
@@ -1042,7 +1163,15 @@ func runDarkTheme(ctx context.Context, env Environment, logger *Logger) error {
 			return nil
 		}
 	}
-	fmt.Println("Dark theme was skipped on Linux because only GNOME-based desktops are handled automatically right now.")
+	if strings.Contains(strings.ToLower(env.DesktopSession), "kde") || strings.Contains(strings.ToLower(env.DesktopSession), "plasma") {
+		switch {
+		case env.Capabilities["plasma-apply-lookandfeel"]:
+			return runProcess(ctx, env, logger, "plasma-apply-lookandfeel", "-a", "org.kde.breezedark.desktop")
+		case env.Capabilities["lookandfeeltool"]:
+			return runProcess(ctx, env, logger, "lookandfeeltool", "-a", "org.kde.breezedark.desktop")
+		}
+	}
+	fmt.Println("Dark theme was skipped on Linux because only GNOME and KDE Plasma desktops are handled automatically right now.")
 	return nil
 }
 
@@ -1689,6 +1818,7 @@ if ($driverUpdates) {
 	if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "amd") {
 		_ = runWingetInstall(ctx, env, logger, "AMD.AMDSoftwareCloudEdition")
 	}
+	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger)
 	_ = runProcess(ctx, env, logger, "pnputil", "/scan-devices")
 	if commandExists("winget") {
 		_ = runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")

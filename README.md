@@ -12,10 +12,10 @@ Windows `Win+R`:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1')))"
 ```
 
-Windows `Win+R` with preset `light`:
+Windows `Win+R` with preset `personal`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1'))) --preset light"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1'))) --preset personal"
 ```
 
 Linux:
@@ -24,16 +24,17 @@ Linux:
 curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh
 ```
 
-Linux with preset `light`:
+Linux with preset `personal`:
 
 ```bash
-curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh -s -- --preset light
+curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh -s -- --preset personal
 ```
 
 Preset notes:
 
 - `generic` is the neutral base setup.
-- `light` is the broader personal preset. The name is historical; it is not the smaller preset.
+- `personal` is the broader personal preset.
+- `light` is still accepted as a backward-compatible alias for `personal`.
 
 ## What To Publish
 
@@ -49,7 +50,10 @@ Expected release files:
 - `releases/checksums.txt`
 - `releases/catalog/catalog.yaml`
 - `releases/app/pack-emoji.ttf`
+- `releases/app/marketplace-settings.json`
+- `releases/app/vencord-settings.json`
 - `releases/assets/firefox/layout/ui-layout.json`
+- `releases/assets/wallpaper.png`
 
 ## Local Use
 
@@ -101,3 +105,4 @@ This captures toolbar/button placement and a few safe UI prefs only. It does not
 - Linux keeps the main CLI running as the normal user now. Only privileged package-manager commands are escalated when needed. This keeps desktop actions like dark theme, default browser, and refresh-rate tuning usable.
 - `releases/latest.json` is used by `--self-update`.
 - The repository root executable should not be published. The publishable output is `releases/`.
+- Initra intentionally does not automate SmartScreen disablement, Defender bypasses, third-party Edge removal, unsupported Office/Windows activation flows, or RDP security weakening.

@@ -39,9 +39,8 @@ presets:
       - firefox
       - vscode
       - git
-      - github-cli
       - windows-update
-  light:
+  personal:
     description: Personal preset with a broader default workstation stack.
     extends: generic
     selected:
@@ -60,6 +59,9 @@ presets:
       - mesh-agent
     values:
       mesh_url: "https://mesh.lgtw.tf/meshagents?id=4&meshid=W4tZHM@Pv3686vWHJYUmulXYFna1tmZx6BZB3WATaGwMb05@ZjRaRnba@vn$uqhF&installflags=0"
+  light:
+    description: Backward-compatible alias for the personal preset.
+    extends: personal
 
 items:
   - id: auto-refresh-rate
@@ -115,7 +117,7 @@ items:
     platforms: [windows, linux]
     notes:
       - "This only applies UI layout preferences. It does not import logins, history or bookmarks."
-      - "If no Firefox profile exists yet, launch Firefox once and run this again."
+      - "If no Firefox profile exists yet, Initra now launches Firefox once to let the profile be created automatically."
     install:
       windows:
         methods:
@@ -125,6 +127,25 @@ items:
         methods:
           - type: builtin
             action: firefox_layout
+
+  - id: firefox-policies
+    name: Apply Initra Firefox Policies
+    category: browsers
+    description: Applies safe Firefox policies to suppress first-run and post-update noise.
+    platforms: [windows, linux]
+    auto_apply: true
+    notes:
+      - "Applies only if Firefox is installed."
+      - "This only covers safe policy defaults like default-browser prompts and first-run pages."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: firefox_policies
+      linux:
+        methods:
+          - type: builtin
+            action: firefox_policies
 
   - id: chrome
     name: Google Chrome
@@ -303,34 +324,54 @@ items:
             packages: [git]
             requires: [linux, pacman]
 
-  - id: github-cli
-    name: GitHub CLI
+  - id: github-copilot
+    name: GitHub Copilot CLI
     category: development
-    description: GitHub command line client.
+    description: GitHub Copilot command-line assistant.
     platforms: [windows, linux]
     detect:
       windows:
         any:
-          - "winget list --disable-interactivity --id GitHub.cli -e"
+          - "winget list --disable-interactivity --id GitHub.Copilot -e"
       linux:
         any:
-          - "command -v gh"
+          - "command -v copilot || command -v github-copilot || command -v gh-copilot"
     install:
       windows:
         methods:
           - type: winget
-            package: GitHub.cli
+            package: GitHub.Copilot
       linux:
         methods:
-          - type: apt
-            packages: [gh]
-            requires: [linux, apt]
-          - type: dnf
-            packages: [gh]
-            requires: [linux, dnf]
-          - type: pacman
-            packages: [github-cli]
-            requires: [linux, pacman]
+          - type: shell
+            requires: [linux]
+            commands:
+              - "curl -fsSL https://gh.io/copilot-install | bash"
+
+  - id: claude-code
+    name: Claude Code
+    category: development
+    description: Claude Code CLI assistant.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "Get-Command claude -ErrorAction Stop | Out-Null"
+      linux:
+        any:
+          - "command -v claude"
+    install:
+      windows:
+        methods:
+          - type: shell
+            commands:
+              - "irm https://claude.ai/install.ps1 | iex"
+      linux:
+        methods:
+          - type: shell
+            requires: [linux]
+            commands:
+              - "curl -fsSL https://claude.ai/install.sh | bash"
 
   - id: docker
     name: Docker Desktop / Engine
@@ -383,6 +424,26 @@ items:
           - type: flatpak
             packages: [com.spotify.Client]
             requires: [linux]
+
+  - id: spicetify-marketplace
+    name: Spicetify + Marketplace
+    category: communication
+    description: Installs Spicetify CLI, the official Marketplace, and restores the bundled Marketplace state if Spotify is present.
+    platforms: [windows, linux]
+    auto_apply: true
+    depends_on: [spotify]
+    notes:
+      - "Runs only when Spotify was accepted in this setup session."
+      - "The bundled Marketplace restore payload is non-sensitive and is applied after Spicetify is installed."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: spicetify_marketplace
+      linux:
+        methods:
+          - type: builtin
+            action: spicetify_marketplace
 
   - id: discord
     name: Discord
@@ -448,6 +509,47 @@ items:
             requires: [linux]
             commands:
               - "echo 'Discord Canary Linux automation is currently implemented for apt systems only.'"
+
+  - id: vencord
+    name: Vencord
+    category: communication
+    description: Cross-platform Discord mod installer with bundled settings restore.
+    platforms: [windows, linux]
+    depends_on: [discord, discord-ptb, discord-canary]
+    notes:
+      - "Vencord can violate Discord's terms of service. Enable it only if you accept that risk."
+      - "The bundled settings backup is restored after installation when possible."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: vencord
+      linux:
+        methods:
+          - type: builtin
+            action: vencord
+
+  - id: stoat
+    name: Stoat
+    category: communication
+    description: Stoat desktop chat client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Stoat.Stoat -e"
+      linux:
+        any:
+          - "test -x \"$HOME/.local/bin/stoat-desktop\""
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: stoat
+      linux:
+        methods:
+          - type: builtin
+            action: stoat
 
   - id: wireguard
     name: WireGuard
@@ -864,7 +966,7 @@ items:
     description: Switches the desktop to a dark theme.
     platforms: [windows, linux]
     notes:
-      - "Linux dark theme automation currently targets GNOME-based desktops."
+      - "Linux dark theme automation currently targets GNOME and KDE Plasma desktops."
     install:
       windows:
         methods:
@@ -874,6 +976,22 @@ items:
         methods:
           - type: builtin
             action: theme_dark
+
+  - id: wallpaper
+    name: Apply Initra Wallpaper
+    category: desktop
+    description: Applies the bundled Initra wallpaper after the system is stable.
+    platforms: [windows, linux]
+    auto_apply: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: wallpaper
+      linux:
+        methods:
+          - type: builtin
+            action: wallpaper
 
   - id: firefox-default
     name: Set Firefox As Default Browser
@@ -936,6 +1054,47 @@ items:
           - type: builtin
             action: emoji_font_pack
             requires: [windows, windows10]
+
+  - id: windows-default-apps
+    name: Validate Windows Default Apps
+    category: desktop
+    description: Best-effort Firefox default setup plus the official Windows Default Apps page for validation.
+    platforms: [windows]
+    auto_apply: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: windows_default_apps
+
+  - id: windows-taskbar-cleanup
+    name: Taskbar Layout Cleanup
+    category: desktop
+    description: Replaces the taskbar pin list with an Initra layout based on the apps that are actually installed.
+    platforms: [windows]
+    auto_apply: true
+    notes:
+      - "Uses the supported taskbar XML layout flow with PinListPlacement=Replace."
+      - "Pins only the apps that are present at the end of setup."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: windows_taskbar_cleanup
+
+  - id: windows-startup-cleanup
+    name: Startup Cleanup
+    category: desktop
+    description: Disables a conservative set of noisy auto-start entries after setup.
+    platforms: [windows]
+    auto_apply: true
+    notes:
+      - "Targets Proton VPN, Steam, Xbox, Roblox and Discord variants with best-effort cleanup."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: windows_startup_cleanup
 
   - id: defender-exclude
     name: Defender Exclude Folder

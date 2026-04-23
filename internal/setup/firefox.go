@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -71,7 +72,13 @@ func applyBundledFirefoxLayout(ctx context.Context, env Environment, logger *Log
 		return err
 	}
 	if len(profiles) == 0 {
-		fmt.Println("No Firefox profile was found. Launch Firefox once, then run this action again.")
+		profiles, err = ensureFirefoxProfileExists(ctx, env, logger)
+		if err != nil {
+			return err
+		}
+	}
+	if len(profiles) == 0 {
+		fmt.Println("Firefox could not create a profile automatically. Launch Firefox once, then try the layout action again.")
 		return nil
 	}
 
@@ -347,4 +354,47 @@ func firefoxRootDir(env Environment) (string, error) {
 	default:
 		return "", fmt.Errorf("Firefox profile discovery is not implemented on %s", env.OS)
 	}
+}
+
+func ensureFirefoxProfileExists(ctx context.Context, env Environment, logger *Logger) ([]string, error) {
+	fmt.Println("No Firefox profile was found yet. Initra will launch Firefox once to create it.")
+	switch env.OS {
+	case "windows":
+		firefoxPath := findFirefoxBinaryWindows()
+		if firefoxPath == "" {
+			return nil, nil
+		}
+		cmd := exec.CommandContext(ctx, firefoxPath, "about:blank")
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		logger.Println("started Firefox to create a profile")
+	case "linux":
+		if !commandExists("firefox") {
+			return nil, nil
+		}
+		cmd := exec.CommandContext(ctx, "firefox", "about:blank")
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		logger.Println("started Firefox to create a profile")
+	default:
+		return nil, nil
+	}
+
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		profiles, err := firefoxProfilePaths(env)
+		if err == nil && len(profiles) > 0 {
+			fmt.Println("Firefox profile detected. Continuing with the bundled layout.")
+			return profiles, nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return firefoxProfilePaths(env)
 }
