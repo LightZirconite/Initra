@@ -895,6 +895,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return installUndetek(ctx, env, logger)
 	case "open_undetek_plus":
 		return openUndetekPlusLink(ctx, env, logger)
+	case "mas_activation":
+		return runMASActivation(ctx, env, logger)
 	case "feature_hyperv":
 		return runShellCommands(ctx, env, logger, []string{`Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart`}, nil)
 	case "feature_sandbox":
@@ -1950,6 +1952,15 @@ func openUndetekPlusLink(ctx context.Context, env Environment, logger *Logger) e
 	}
 	url := "https://undetek.com/my-account/downloads/"
 	return runProcess(ctx, env, logger, "cmd", "/c", "start", "", url)
+}
+
+func runMASActivation(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	// Démarrer MAS via PowerShell en élevant les privilèges ou simplement dans une nouvelle fenêtre console invisible pour la commande hôte, mais laissant MAS s'afficher si nécessaire
+	script := "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command `\"irm https://get.activated.win | iex`\"\" -WindowStyle Hidden -Verb RunAs"
+	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
 func runPrivacyTweaks(ctx context.Context, env Environment, logger *Logger) error {

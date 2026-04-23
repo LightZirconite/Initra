@@ -1326,3 +1326,16 @@ items:
         methods:
           - type: builtin
             action: open_undetek_plus
+
+  - id: mas-activation
+    name: Microsoft Activation & Tweaks (MAS)
+    category: tweaks
+    description: Ouvre le menu d'activation de MAS pour activer Windows/Office ou prolonger les MAJ Win10 ESU.
+    platforms: [windows]
+    notes:
+      - "Ouvre automatiquement l'interface sous forme de menu console MAS textuel."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: mas_activation
