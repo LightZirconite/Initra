@@ -1,13 +1,13 @@
 ﻿{
-    "version":  "d4b9e2d",
-    "published":  "2026-04-23T17:24:21.1235674Z",
+    "version":  "4985e69",
+    "published":  "2026-04-23T17:31:29.3045571Z",
     "notes":  "Built by build-release.bat",
     "artifacts":  {
                       "windows-amd64":  "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/initra-windows-amd64.exe",
                       "linux-amd64":  "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/initra-linux-amd64"
                   },
     "sha256":  {
-                   "windows-amd64":  "68e7e87accfe0939629841acae32d9b0e1db83d0347a13df4fef48866b41783a",
-                   "linux-amd64":  "9b57c37adc9277d76242c3a2058455db63519d36b2147573bbeabbf2f0b5b54a"
+                   "windows-amd64":  "c0fc6c162f0a81e6f56f1d523772cf760efb819f5090b4a889dcfe07f789795a",
+                   "linux-amd64":  "70877635bd73b8e4a251bfaba55c578645bac428bea34d63e907d40fd59e2046"
                }
 }
