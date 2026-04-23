@@ -22,6 +22,7 @@ func phaseForItem(item Item) string {
 		return phaseMaintenance
 	case "auto-refresh-rate",
 		"theme-dark",
+		"sleep-policy",
 		"firefox-default",
 		"time-sync-paris",
 		"dualboot-utc",
@@ -39,9 +40,9 @@ func phaseForItem(item Item) string {
 
 func phaseWeight(name string) int {
 	switch name {
-	case phaseApplications:
-		return 0
 	case phaseMaintenance:
+		return 0
+	case phaseApplications:
 		return 1
 	case phasePostUpdate:
 		return 2
@@ -52,10 +53,10 @@ func phaseWeight(name string) int {
 
 func phaseDisplayName(name string) string {
 	switch name {
+	case phaseMaintenance:
+		return "System Preparation & Updates"
 	case phaseApplications:
 		return "Applications"
-	case phaseMaintenance:
-		return "Maintenance"
 	case phasePostUpdate:
 		return "Post-Update Personalization"
 	default:

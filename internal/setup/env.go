@@ -164,7 +164,7 @@ func detectLinuxDetails(env *Environment) error {
 		env.Raw["session_type"] = env.SessionType
 	}
 
-	for _, mgr := range []string{"apt-get", "dnf", "pacman", "flatpak", "fwupdmgr", "gsettings", "xrandr", "xdg-settings", "timedatectl", "systemctl", "plasma-apply-lookandfeel", "lookandfeeltool", "plasma-apply-wallpaperimage"} {
+	for _, mgr := range []string{"apt-get", "dnf", "pacman", "flatpak", "fwupdmgr", "gsettings", "xrandr", "xdg-settings", "timedatectl", "systemctl", "plasma-apply-lookandfeel", "lookandfeeltool", "plasma-apply-wallpaperimage", "kwriteconfig6", "kwriteconfig5"} {
 		if commandExists(mgr) {
 			env.Capabilities[mgr] = true
 			switch mgr {

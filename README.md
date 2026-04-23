@@ -72,6 +72,8 @@ go build -o dist/initra.exe ./cmd/setupctl
 GOOS=linux GOARCH=amd64 go build -o dist/initra-linux-amd64 ./cmd/setupctl
 ```
 
+Do not use plain `go build ./cmd/setupctl` from the repository root unless you intentionally want a temporary local `setupctl.exe` artifact there. The publishable binaries are the ones written into `dist/` or `releases/`.
+
 Run locally:
 
 ```bash

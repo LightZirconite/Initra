@@ -26,6 +26,28 @@ func TestLoadCatalog(t *testing.T) {
 	if !autoRefresh.AutoApply {
 		t.Fatalf("expected auto-refresh-rate to be auto_apply")
 	}
+	if _, ok := catalog.itemByID("sleep-policy"); !ok {
+		t.Fatalf("expected sleep-policy item in catalog")
+	}
+	fastfetch, ok := catalog.itemByID("fastfetch")
+	if !ok {
+		t.Fatalf("expected fastfetch item in catalog")
+	}
+	if !fastfetch.AutoApply {
+		t.Fatalf("expected fastfetch to be auto_apply")
+	}
+	if _, ok := catalog.itemByID("everything-toolbar"); !ok {
+		t.Fatalf("expected everything-toolbar item in catalog")
+	}
+	if _, ok := catalog.itemByID("everything"); ok {
+		t.Fatalf("did not expect legacy everything item to remain in catalog")
+	}
+	if _, ok := catalog.itemByID("localsend"); !ok {
+		t.Fatalf("expected localsend item in catalog")
+	}
+	if _, ok := catalog.itemByID("noisetorch"); !ok {
+		t.Fatalf("expected noisetorch item in catalog")
+	}
 }
 
 func TestMergePreset(t *testing.T) {
@@ -78,18 +100,24 @@ func containsString(value, fragment string) bool {
 func TestSortPlanByPhase(t *testing.T) {
 	plan := Plan{
 		Steps: []ResolvedStep{
-			{Item: Item{ID: "theme-dark"}, Phase: phasePostUpdate},
 			{Item: Item{ID: "windows-update"}, Phase: phaseMaintenance},
 			{Item: Item{ID: "spotify"}, Phase: phaseApplications},
+			{Item: Item{ID: "theme-dark"}, Phase: phasePostUpdate},
 		},
 	}
 	sortPlanByPhase(&plan)
 	got := []string{plan.Steps[0].Item.ID, plan.Steps[1].Item.ID, plan.Steps[2].Item.ID}
-	want := []string{"spotify", "windows-update", "theme-dark"}
+	want := []string{"windows-update", "spotify", "theme-dark"}
 	for idx := range want {
 		if got[idx] != want[idx] {
 			t.Fatalf("unexpected order: got %v want %v", got, want)
 		}
+	}
+}
+
+func TestPhaseForSleepPolicy(t *testing.T) {
+	if got := phaseForItem(Item{ID: "sleep-policy"}); got != phasePostUpdate {
+		t.Fatalf("unexpected phase for sleep-policy: got %s want %s", got, phasePostUpdate)
 	}
 }
 
@@ -128,8 +156,8 @@ func TestDefaultSelectionForItemReflectsProfile(t *testing.T) {
 	if !defaultSelectionForItem(Item{ID: "firefox"}, profile) {
 		t.Fatalf("expected preset-selected item to default to yes")
 	}
-	if defaultSelectionForItem(Item{ID: "proton-vpn"}, profile) {
-		t.Fatalf("expected non-selected item to default to no")
+	if !defaultSelectionForItem(Item{ID: "proton-vpn"}, profile) {
+		t.Fatalf("expected non-selected item to default to yes for a consistent prompt flow")
 	}
 }
 
@@ -226,5 +254,26 @@ func TestSessionReportSerialization(t *testing.T) {
 	}
 	if !strings.Contains(text, `"item_id": "firefox"`) {
 		t.Fatalf("expected serialized step result, got %s", text)
+	}
+}
+
+func TestWindowsOnlyAndVersionSpecificVisibility(t *testing.T) {
+	catalog, err := loadCatalog(filepath.Join("..", "..", "catalog", "catalog.yaml"))
+	if err != nil {
+		t.Fatalf("loadCatalog() error = %v", err)
+	}
+
+	nilesoft, ok := catalog.itemByID("nilesoft-shell")
+	if !ok {
+		t.Fatalf("expected nilesoft-shell item in catalog")
+	}
+	if itemVisibleOn(nilesoft, Environment{OS: "linux"}) {
+		t.Fatalf("did not expect Windows-only nilesoft-shell to be visible on Linux")
+	}
+	if !itemVisibleOn(nilesoft, Environment{OS: "windows", Windows: WindowsInfo{ProductName: "Windows 10 Pro"}}) {
+		t.Fatalf("expected nilesoft-shell to be visible on Windows 10")
+	}
+	if itemVisibleOn(nilesoft, Environment{OS: "windows", Windows: WindowsInfo{ProductName: "Windows 11 Pro"}}) {
+		t.Fatalf("did not expect nilesoft-shell to be visible on Windows 11")
 	}
 }

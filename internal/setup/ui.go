@@ -21,7 +21,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 		fmt.Printf(" %s %s", termUI.dim("|"), env.DistroName)
 	}
 	fmt.Println()
-	fmt.Println(termUI.dim("Tip: press Enter to accept the default answer shown in the prompt."))
+	fmt.Println(termUI.dim("Tip: press Enter to accept, or type n to skip an item."))
 	fmt.Println()
 
 	for _, category := range catalog.Categories {
@@ -122,9 +122,6 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, error) {
 	suffix := "[Enter/n]"
-	if !defaultValue {
-		suffix = "[y/Enter]"
-	}
 	for {
 		fmt.Printf("%s %s ", formatPrompt(prompt), termUI.dim(suffix))
 		line, err := reader.ReadString('\n')
@@ -141,16 +138,12 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, 
 		case "n", "no":
 			return false, nil
 		}
-		if defaultValue {
-			fmt.Println("Press Enter to accept, or type n to refuse.")
-		} else {
-			fmt.Println("Type y to accept, or press Enter to keep it skipped.")
-		}
+		fmt.Println("Press Enter to accept, or type n to refuse.")
 	}
 }
 
 func defaultSelectionForItem(item Item, profile UserProfile) bool {
-	return profile.Selected[item.ID]
+	return true
 }
 
 func promptString(reader *bufio.Reader, prompt, defaultValue string) (string, error) {

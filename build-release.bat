@@ -18,9 +18,20 @@ set "FIREFOX_LAYOUT_DIR=%RELEASE_DIR%\assets\firefox\layout"
 set "MANIFEST=%RELEASE_DIR%\latest.json"
 set "CHECKSUMS=%RELEASE_DIR%\checksums.txt"
 
+set "GO_EXE=C:\Program Files\Go\bin\go.exe"
+if exist "%GO_EXE%" goto :go_found
 where go >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Go was not found in PATH.
+  exit /b 1
+)
+for /f "usebackq delims=" %%i in (`where go`) do (
+  set "GO_EXE=%%i"
+  goto :go_found
+)
+:go_found
+if not defined GO_EXE (
+  echo [ERROR] Go path could not be resolved.
   exit /b 1
 )
 
@@ -30,8 +41,14 @@ if not defined VERSION (
 )
 
 echo [1/6] Running tests...
-go test ./...
+"%GO_EXE%" test ./...
 if errorlevel 1 goto :fail
+
+if exist "%ROOT%setupctl.exe" del /q "%ROOT%setupctl.exe" >nul 2>nul
+if exist "%ROOT%initra.exe" del /q "%ROOT%initra.exe" >nul 2>nul
+if exist "%ROOT%setupctl" del /q "%ROOT%setupctl" >nul 2>nul
+if exist "%ROOT%initra" del /q "%ROOT%initra" >nul 2>nul
+if exist "%RELEASE_DIR%\*.exe~" del /q "%RELEASE_DIR%\*.exe~" >nul 2>nul
 
 if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 if exist "%RELEASE_DIR%\app" rmdir /s /q "%RELEASE_DIR%\app"
@@ -39,13 +56,13 @@ if exist "%RELEASE_DIR%\catalog" rmdir /s /q "%RELEASE_DIR%\catalog"
 if exist "%RELEASE_DIR%\assets" rmdir /s /q "%RELEASE_DIR%\assets"
 
 echo [2/6] Building Windows binary...
-go build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o "%WIN_BIN%" ./cmd/setupctl
+"%GO_EXE%" build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o "%WIN_BIN%" ./cmd/setupctl
 if errorlevel 1 goto :fail
 
 echo [3/6] Building Linux binary...
 set "GOOS=linux"
 set "GOARCH=amd64"
-go build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o "%LINUX_BIN%" ./cmd/setupctl
+"%GO_EXE%" build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o "%LINUX_BIN%" ./cmd/setupctl
 if errorlevel 1 goto :fail
 set "GOOS="
 set "GOARCH="

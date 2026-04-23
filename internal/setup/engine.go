@@ -83,6 +83,7 @@ func Run(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	printPreflightChecks(runPreflightChecks(context.Background(), env, plan, logger, opts.BaseURL))
 	printSelectionSummary(catalog, env, profile)
 	printPlan(plan)
 	if opts.DryRun {
@@ -300,6 +301,16 @@ func extraItemWarnings(item Item, env Environment, inputs map[string]string) []s
 		warnings = append(warnings, "The Windows 10 emoji font pack requires a reboot before it is fully applied.")
 	case "vencord":
 		warnings = append(warnings, "Vencord modifies Discord in a way that can violate Discord's terms of service.")
+	case "fastfetch":
+		warnings = append(warnings, "Fastfetch is a terminal info command. It is installed for convenience but does not replace the default terminal app.")
+	case "localsend":
+		warnings = append(warnings, "LocalSend can need local firewall or private-network permission changes before nearby devices become visible.")
+	case "everything-toolbar":
+		warnings = append(warnings, "EverythingToolbar installs Everything automatically because the toolbar depends on the Everything search indexer.")
+	case "simplewall":
+		warnings = append(warnings, "simplewall can interrupt app connectivity or remote support if rules are tightened aggressively.")
+	case "winutil-shortcut":
+		warnings = append(warnings, "WinUtil is not bundled. The desktop shortcut downloads the official script only when the user launches it.")
 	}
 	return warnings
 }
@@ -721,6 +732,11 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
+	if env.OS == "windows" {
+		if err := setupResumeHook(paths, logger); err != nil {
+			return err
+		}
+	}
 	if err := saveSessionReport(reportPath, &report); err != nil {
 		return err
 	}
@@ -874,6 +890,11 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	}
 	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
 		return err
+	}
+	if env.OS == "windows" {
+		if err := setupResumeHook(paths, logger); err != nil {
+			return err
+		}
 	}
 	report := SessionReport{}
 	if state.ReportPath != "" {
@@ -1207,8 +1228,12 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 			URL:      "{{index .inputs \"mesh_url\"}}",
 			FileName: "mesh-agent.exe",
 		}, step.Inputs)
+	case "fastfetch":
+		return installFastfetch(ctx, env, logger)
 	case "openwhispr_linux":
 		return installOpenWhispr(ctx, env, logger)
+	case "noisetorch_linux":
+		return installNoiseTorch(ctx, env, logger)
 	case "onedrive_linux":
 		return installOneDriveLinux(ctx, env, logger)
 	case "spicetify_marketplace":
@@ -1217,6 +1242,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return installVencord(ctx, env, logger, baseURL)
 	case "stoat":
 		return installStoat(ctx, env, logger)
+	case "everything_toolbar":
+		return installEverythingToolbar(ctx, env, logger)
 	case "windows_update":
 		return runWindowsMaintenance(ctx, env, logger)
 	case "driver_refresh":
@@ -1227,6 +1254,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return configureDefenderExclusion(ctx, env, logger, step.Inputs["defender_exclude_path"])
 	case "theme_dark":
 		return runDarkTheme(ctx, env, logger)
+	case "sleep_policy":
+		return configureSleepPolicy(ctx, env, logger)
 	case "firefox_default":
 		return setFirefoxDefault(ctx, env, logger)
 	case "time_sync":
@@ -1269,6 +1298,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return openUndetekPlusLink(ctx, env, logger)
 	case "mas_activation":
 		return runMASActivation(ctx, env, logger)
+	case "winutil_shortcut":
+		return createWinUtilDesktopShortcut(ctx, env, logger)
 	case "feature_hyperv":
 		return runShellCommands(ctx, env, logger, []string{`Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart`}, nil)
 	case "feature_sandbox":
@@ -1555,6 +1586,63 @@ func runDarkTheme(ctx context.Context, env Environment, logger *Logger) error {
 	}
 	fmt.Println("Dark theme was skipped on Linux because only GNOME and KDE Plasma desktops are handled automatically right now.")
 	return nil
+}
+
+func configureSleepPolicy(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS == "windows" {
+		for _, args := range [][]string{
+			{"powercfg", "/change", "standby-timeout-ac", "0"},
+			{"powercfg", "/change", "hibernate-timeout-ac", "0"},
+			{"powercfg", "/change", "standby-timeout-dc", "10"},
+			{"powercfg", "/change", "hibernate-timeout-dc", "0"},
+		} {
+			if err := runProcess(ctx, env, logger, args[0], args[1:]...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if env.OS != "linux" {
+		return nil
+	}
+
+	desktop := strings.ToLower(env.DesktopSession)
+	switch {
+	case strings.Contains(desktop, "kde") || strings.Contains(desktop, "plasma"):
+		writer := "kwriteconfig6"
+		configFile := "powerdevilrc"
+		if !env.Capabilities["kwriteconfig6"] {
+			if env.Capabilities["kwriteconfig5"] {
+				writer = "kwriteconfig5"
+				configFile = "powermanagementprofilesrc"
+			} else {
+				fmt.Println("Sleep policy was skipped on KDE because kwriteconfig6 or kwriteconfig5 is unavailable.")
+				return nil
+			}
+		}
+		configPath := filepath.Join(env.HomeDir, ".config", configFile)
+		for _, update := range []struct {
+			profile string
+			key     string
+			value   string
+		}{
+			{profile: "AC", key: "AutoSuspendAction", value: "0"},
+			{profile: "AC", key: "AutoSuspendIdleTimeoutSec", value: "0"},
+			{profile: "Battery", key: "AutoSuspendAction", value: "1"},
+			{profile: "Battery", key: "AutoSuspendIdleTimeoutSec", value: "600"},
+			{profile: "LowBattery", key: "AutoSuspendAction", value: "1"},
+			{profile: "LowBattery", key: "AutoSuspendIdleTimeoutSec", value: "600"},
+		} {
+			if err := runProcess(ctx, env, logger, writer, "--notify", "--file", configPath, "--group", update.profile, "--group", "SuspendAndShutdown", "--type", "int", "--key", update.key, update.value); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		fmt.Println("Sleep policy was skipped on Linux because only KDE Plasma desktops are handled automatically right now.")
+		return nil
+	}
 }
 
 func setFirefoxDefault(ctx context.Context, env Environment, logger *Logger) error {
@@ -1988,7 +2076,9 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 		return nil
 	}
 	if runtime.GOOS == "windows" {
-		command := fmt.Sprintf(`reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v %s-resume /d "\"%s\" --resume" /f`, appSlug, binary)
+		taskName := appName + " Resume"
+		command := fmt.Sprintf(`schtasks /create /f /sc ONLOGON /rl HIGHEST /tn "%s" /tr "\"%s\" --resume"`, taskName, binary)
+		logger.Println("installing windows resume task", taskName)
 		return exec.Command("cmd", "/c", command).Run()
 	}
 	if paths.ResumeAutostart == "" {
@@ -2003,7 +2093,8 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 
 func removeResumeHook(paths Paths) error {
 	if runtime.GOOS == "windows" {
-		return exec.Command("cmd", "/c", fmt.Sprintf(`reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v %s-resume /f`, appSlug)).Run()
+		taskName := appName + " Resume"
+		return exec.Command("cmd", "/c", fmt.Sprintf(`schtasks /delete /f /tn "%s"`, taskName)).Run()
 	}
 	if paths.ResumeAutostart == "" {
 		return nil
@@ -2071,6 +2162,209 @@ func fetchGitHubRelease(ctx context.Context, owner, repo string) (githubRelease,
 	return release, nil
 }
 
+func ensureWingetPackage(ctx context.Context, env Environment, logger *Logger, packageID string) error {
+	action, err := detectWingetPackageState(Item{Name: packageID}, packageID, env, logger)
+	if err != nil {
+		logger.Println("winget package state detection failed", packageID, err)
+	}
+	switch action {
+	case stepActionAlreadyPresent, stepActionAlreadyUpToDate:
+		return nil
+	case stepActionUpgrade:
+		return runWingetAction(ctx, env, logger, packageID, stepActionUpgrade)
+	default:
+		return runWingetAction(ctx, env, logger, packageID, stepActionInstall)
+	}
+}
+
+func findGitHubReleaseAsset(release githubRelease, parts ...string) *githubReleaseAsset {
+	for _, asset := range release.Assets {
+		name := strings.ToLower(asset.Name)
+		match := true
+		for _, part := range parts {
+			if !strings.Contains(name, strings.ToLower(part)) {
+				match = false
+				break
+			}
+		}
+		if match {
+			selected := asset
+			return &selected
+		}
+	}
+	return nil
+}
+
+func installFastfetch(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS == "windows" {
+		return ensureWingetPackage(ctx, env, logger, "Fastfetch-cli.Fastfetch")
+	}
+	if env.OS != "linux" {
+		return nil
+	}
+
+	release, err := fetchGitHubRelease(ctx, "fastfetch-cli", "fastfetch")
+	if err != nil {
+		return err
+	}
+
+	arch := "amd64"
+	switch env.Arch {
+	case "amd64":
+		arch = "amd64"
+	case "arm64":
+		arch = "aarch64"
+	default:
+		return fmt.Errorf("fastfetch is not wired for linux arch %q yet", env.Arch)
+	}
+
+	if contains(env.PackageManagers, "apt") {
+		if asset := findGitHubReleaseAsset(release, "linux-"+arch, ".deb"); asset != nil {
+			return runDirectInstall(ctx, env, logger, Method{
+				URL:      asset.BrowserDownloadURL,
+				FileName: asset.Name,
+			}, nil)
+		}
+	}
+	if contains(env.PackageManagers, "dnf") {
+		if asset := findGitHubReleaseAsset(release, "linux-"+arch, ".rpm"); asset != nil {
+			return runDirectInstall(ctx, env, logger, Method{
+				URL:      asset.BrowserDownloadURL,
+				FileName: asset.Name,
+			}, nil)
+		}
+	}
+
+	asset := findGitHubReleaseAsset(release, "linux-"+arch, ".tar.gz")
+	if asset == nil {
+		return errors.New("could not find a compatible fastfetch Linux asset")
+	}
+	target := filepath.Join(env.TempDir, asset.Name)
+	if err := downloadFile(ctx, asset.BrowserDownloadURL, target); err != nil {
+		return err
+	}
+	extractDir := filepath.Join(env.TempDir, "initra-fastfetch")
+	_ = os.RemoveAll(extractDir)
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		return err
+	}
+	if err := runProcess(ctx, env, logger, "tar", "-xzf", target, "-C", extractDir); err != nil {
+		return err
+	}
+	binaryPath, err := findFileRecursive(extractDir, "fastfetch")
+	if err != nil {
+		return err
+	}
+	finalDir := filepath.Join(env.HomeDir, ".local", "bin")
+	if err := os.MkdirAll(finalDir, 0o755); err != nil {
+		return err
+	}
+	finalPath := filepath.Join(finalDir, "fastfetch")
+	if err := copyFile(binaryPath, finalPath, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(finalPath, 0o755); err != nil {
+		return err
+	}
+	fmt.Println("Installed fastfetch into ~/.local/bin using the official release artifact.")
+	return nil
+}
+
+func installNoiseTorch(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "linux" {
+		return nil
+	}
+	if env.Arch != "amd64" {
+		return fmt.Errorf("noisetorch automation currently targets linux amd64 only, got %q", env.Arch)
+	}
+
+	release, err := fetchGitHubRelease(ctx, "noisetorch", "NoiseTorch")
+	if err != nil {
+		return err
+	}
+	asset := findGitHubReleaseAsset(release, "x64", ".tgz")
+	if asset == nil {
+		return errors.New("could not find a compatible NoiseTorch release asset")
+	}
+	target := filepath.Join(env.TempDir, asset.Name)
+	if err := downloadFile(ctx, asset.BrowserDownloadURL, target); err != nil {
+		return err
+	}
+	if err := runProcess(ctx, env, logger, "tar", "-C", env.HomeDir, "-h", "-xzf", target); err != nil {
+		return err
+	}
+	noisetorchPath := filepath.Join(env.HomeDir, ".local", "bin", "noisetorch")
+	if _, err := os.Stat(noisetorchPath); err != nil {
+		return fmt.Errorf("noisetorch binary was not found after extraction: %w", err)
+	}
+	if commandExists("setcap") {
+		if err := runProcess(ctx, env, logger, "setcap", "CAP_SYS_RESOURCE=+ep", noisetorchPath); err != nil {
+			logger.Println("setcap for noisetorch failed", err)
+		}
+	}
+	fmt.Println("Installed NoiseTorch into ~/.local/bin. Select the filtered microphone in your voice apps afterwards.")
+	return nil
+}
+
+func installEverythingToolbar(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	if err := ensureWingetPackage(ctx, env, logger, "voidtools.Everything"); err != nil {
+		return err
+	}
+
+	toolbarPackage := "srwi.EverythingToolbar.Launcher"
+	if isWindows10(env) {
+		toolbarPackage = "srwi.EverythingToolbar.Deskband"
+	}
+	if err := ensureWingetPackage(ctx, env, logger, toolbarPackage); err != nil {
+		return err
+	}
+
+	if isWindows10(env) {
+		fmt.Println("EverythingToolbar was installed. On Windows 10 you may still need to enable it from the taskbar Toolbars menu.")
+	} else {
+		fmt.Println("EverythingToolbar was installed. If the setup assistant does not appear automatically, launch it from Start.")
+	}
+	return nil
+}
+
+func createWinUtilDesktopShortcut(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	_ = ctx
+	_ = logger
+
+	desktopDir := firstExisting(
+		filepath.Join(env.HomeDir, "Desktop"),
+		filepath.Join(env.HomeDir, "OneDrive", "Desktop"),
+	)
+	if desktopDir == "" {
+		desktopDir = filepath.Join(env.HomeDir, "Desktop")
+	}
+	if err := os.MkdirAll(desktopDir, 0o755); err != nil {
+		return err
+	}
+
+	powershellPath := filepath.Join(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	if _, err := os.Stat(powershellPath); err != nil {
+		powershellPath = "powershell.exe"
+	}
+	iconPath := currentBinaryPath()
+	if iconPath == "" {
+		iconPath = powershellPath
+	}
+	shortcutPath := filepath.Join(desktopDir, "WinUtil - App Installer.lnk")
+	arguments := `-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command ""irm https://christitus.com/win | iex""'"`
+	if err := createWindowsShortcutEx(shortcutPath, powershellPath, env.HomeDir, arguments, iconPath); err != nil {
+		return err
+	}
+	fmt.Printf("Created %s on the desktop.\n", filepath.Base(shortcutPath))
+	return nil
+}
+
 func installOpenWhispr(ctx context.Context, env Environment, logger *Logger) error {
 	release, err := fetchGitHubRelease(ctx, "OpenWhispr", "openwhispr")
 	if err != nil {
@@ -2107,19 +2401,28 @@ func installOneDriveLinux(ctx context.Context, env Environment, logger *Logger) 
 
 func runWindowsMaintenance(ctx context.Context, env Environment, logger *Logger) error {
 	if env.OS == "linux" {
+		var updateErr error
 		if contains(env.PackageManagers, "apt") {
 			if err := runProcess(ctx, env, logger, "apt-get", "update"); err != nil {
 				return err
 			}
 			if err := runProcess(ctx, env, logger, "apt-get", "upgrade", "-y"); err != nil {
-				return err
+				updateErr = err
 			}
 		} else if contains(env.PackageManagers, "dnf") {
 			if err := runProcess(ctx, env, logger, "dnf", "upgrade", "-y", "--refresh"); err != nil {
-				return err
+				updateErr = err
 			}
 		} else if contains(env.PackageManagers, "pacman") {
 			if err := runProcess(ctx, env, logger, "pacman", "-Syu", "--noconfirm"); err != nil {
+				updateErr = err
+			}
+		}
+		if updateErr != nil {
+			return updateErr
+		}
+		if env.Capabilities["flatpak"] {
+			if err := runProcess(ctx, env, logger, "flatpak", "update", "-y"); err != nil {
 				return err
 			}
 		}
@@ -2130,7 +2433,10 @@ func runWindowsMaintenance(ctx context.Context, env Environment, logger *Logger)
 		return nil
 	}
 
+	var updateErr error
+	pswuAvailable := false
 	if err := ensurePSWindowsUpdate(ctx, logger); err == nil {
+		pswuAvailable = true
 		script := `
 $ErrorActionPreference = 'Stop'
 Import-Module PSWindowsUpdate -Force
@@ -2146,24 +2452,30 @@ Write-Host ''
 Write-Host 'Recent Windows Update history:'
 Get-WUHistory | Select-Object -First 10 Date, Title, Result | Format-Table -AutoSize | Out-String | Write-Host
 `
-		if err := runWindowsPowerShellScript(ctx, logger, script); err == nil {
-			return nil
+		if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
+			logger.Println("pswindowsupdate maintenance flow failed, falling back to builtin scan")
+			updateErr = err
 		}
-		logger.Println("pswindowsupdate maintenance flow failed, falling back to builtin scan")
+	} else {
+		updateErr = err
 	}
 
-	script := `
+	if !pswuAvailable || updateErr != nil {
+		script := `
 try { Start-Process "ms-settings:windowsupdate" } catch {}
 try { UsoClient StartInteractiveScan } catch {}
 try { UsoClient StartScan } catch {}
 try { UsoClient StartDownload } catch {}
 try { UsoClient StartInstall } catch {}
 `
-	if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
-		return err
+		if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
+			return err
+		}
 	}
 	if commandExists("winget") {
-		_ = runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
+		if err := runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {
+			logger.Println("winget upgrade all failed", err)
+		}
 	}
 	return nil
 }

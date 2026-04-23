@@ -1024,10 +1024,16 @@ func isSteamDeckLCD(env Environment) bool {
 }
 
 func createWindowsShortcut(shortcutPath, targetPath string) error {
-	ps := fmt.Sprintf(`$w = New-Object -ComObject WScript.Shell; $s = $w.CreateShortcut('%s'); $s.TargetPath = '%s'; $s.WorkingDirectory = '%s'; $s.Save()`,
+	return createWindowsShortcutEx(shortcutPath, targetPath, filepath.Dir(targetPath), "", "")
+}
+
+func createWindowsShortcutEx(shortcutPath, targetPath, workingDirectory, arguments, iconLocation string) error {
+	ps := fmt.Sprintf(`$w = New-Object -ComObject WScript.Shell; $s = $w.CreateShortcut('%s'); $s.TargetPath = '%s'; $s.WorkingDirectory = '%s'; $s.Arguments = '%s'; $s.IconLocation = '%s'; $s.Save()`,
 		strings.ReplaceAll(shortcutPath, `'`, `''`),
 		strings.ReplaceAll(targetPath, `'`, `''`),
-		strings.ReplaceAll(filepath.Dir(targetPath), `'`, `''`),
+		strings.ReplaceAll(workingDirectory, `'`, `''`),
+		strings.ReplaceAll(arguments, `'`, `''`),
+		strings.ReplaceAll(iconLocation, `'`, `''`),
 	)
 	_, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
 	return err

@@ -56,6 +56,7 @@ presets:
       - vlc
       - ffmpeg
       - sevenzip
+      - localsend
       - mesh-agent
     values:
       mesh_url: "https://mesh.lgtw.tf/meshagents?id=4&meshid=W4tZHM@Pv3686vWHJYUmulXYFna1tmZx6BZB3WATaGwMb05@ZjRaRnba@vn$uqhF&installflags=0"
@@ -540,7 +541,7 @@ items:
           - "winget list --disable-interactivity --id Stoat.Stoat -e"
       linux:
         any:
-          - "test -x \"$HOME/.local/bin/stoat-desktop\""
+          - 'test -x "$HOME/.local/bin/stoat-desktop"'
     install:
       windows:
         methods:
@@ -639,6 +640,31 @@ items:
             packages: [com.termius.Termius]
             requires: [linux]
 
+  - id: fastfetch
+    name: Fastfetch
+    category: utilities
+    description: Fast system summary for terminal sessions.
+    platforms: [windows, linux]
+    auto_apply: true
+    notes:
+      - "Installs the fastfetch command-line tool. It does not replace your default terminal."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Fastfetch-cli.Fastfetch -e"
+      linux:
+        any:
+          - 'command -v fastfetch || test -x "$HOME/.local/bin/fastfetch"'
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Fastfetch-cli.Fastfetch
+      linux:
+        methods:
+          - type: builtin
+            action: fastfetch
+
   - id: onedrive
     name: OneDrive
     category: utilities
@@ -662,6 +688,32 @@ items:
         methods:
           - type: builtin
             action: onedrive_linux
+
+  - id: localsend
+    name: LocalSend
+    category: utilities
+    description: Cross-platform nearby file sharing without internet.
+    platforms: [windows, linux]
+    notes:
+      - "Windows can need a Private network profile or a firewall prompt acceptance for discovery to work."
+      - "Linux uses the official Flathub distribution."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id LocalSend.LocalSend -e"
+      linux:
+        any:
+          - "command -v localsend || flatpak info org.localsend.localsend_app >/dev/null 2>&1"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: LocalSend.LocalSend
+      linux:
+        methods:
+          - type: flatpak
+            packages: [org.localsend.localsend_app]
+            requires: [linux]
 
   - id: steam
     name: Steam
@@ -803,6 +855,21 @@ items:
           - type: winget
             package: 7zip.7zip
 
+  - id: quicklook
+    name: QuickLook
+    category: utilities
+    description: Quick file preview from Explorer with the space bar.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id QL-Win.QuickLook -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: QL-Win.QuickLook
+
   - id: powertoys
     name: PowerToys
     category: utilities
@@ -818,20 +885,56 @@ items:
           - type: winget
             package: Microsoft.PowerToys
 
-  - id: everything
-    name: Everything
+  - id: everything-toolbar
+    name: EverythingToolbar
     category: utilities
-    description: Fast file indexing search.
+    description: Installs Everything plus taskbar search integration.
     platforms: [windows]
+    notes:
+      - "Everything is installed automatically first because EverythingToolbar depends on it."
+      - "Windows 11 uses the launcher package. Windows 10 uses the deskband package."
+      - "On Windows 10 you can still need to enable the taskbar toolbar manually after install."
     detect:
       windows:
         any:
-          - "winget list --disable-interactivity --id voidtools.Everything -e"
+          - "winget list --disable-interactivity --id srwi.EverythingToolbar.Launcher -e"
+          - "winget list --disable-interactivity --id srwi.EverythingToolbar.Deskband -e"
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: everything_toolbar
+            interaction: helper_window
+
+  - id: unigetui
+    name: UniGetUI
+    category: utilities
+    description: Windows package manager hub for installs, upgrades and removals.
+    platforms: [windows]
+    notes:
+      - "Official project formerly known as WingetUI."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Devolutions.UniGetUI -e"
     install:
       windows:
         methods:
           - type: winget
-            package: voidtools.Everything
+            package: Devolutions.UniGetUI
+
+  - id: winutil-shortcut
+    name: WinUtil Desktop Shortcut
+    category: utilities
+    description: Creates a desktop shortcut that launches Chris Titus Tech's WinUtil as administrator on demand.
+    platforms: [windows]
+    notes:
+      - "Creates only a shortcut. The tool itself is downloaded when the user launches it."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: winutil_shortcut
 
   - id: superwhisper
     name: SuperWhisper
@@ -853,6 +956,23 @@ items:
         methods:
           - type: builtin
             action: openwhispr_linux
+
+  - id: noisetorch
+    name: NoiseTorch
+    category: communication
+    description: Real-time microphone noise suppression on Linux.
+    platforms: [linux]
+    notes:
+      - "After installation, select the filtered NoiseTorch microphone inside your voice apps."
+    detect:
+      linux:
+        any:
+          - 'command -v noisetorch || test -x "$HOME/.local/bin/noisetorch"'
+    install:
+      linux:
+        methods:
+          - type: builtin
+            action: noisetorch_linux
 
   - id: office
     name: Microsoft 365 Apps
@@ -902,8 +1022,8 @@ items:
     platforms: [windows, linux]
     requires_admin: true
     notes:
-      - "Windows uses PSWindowsUpdate when available, then falls back to the built-in Windows Update client."
-      - "Linux uses the native distro package manager, plus firmware refresh when available."
+      - "Windows uses PSWindowsUpdate when available, then falls back to the built-in Windows Update client, and also refreshes WinGet apps."
+      - "Linux uses the native distro package manager, refreshes Flatpak apps when available, and checks firmware updates when possible."
     install:
       windows:
         methods:
@@ -977,6 +1097,23 @@ items:
         methods:
           - type: builtin
             action: theme_dark
+
+  - id: sleep-policy
+    name: Never Sleep on AC
+    category: desktop
+    description: Keeps the computer awake on AC power and suspends after 10 minutes on battery.
+    platforms: [windows, linux]
+    notes:
+      - "Linux automation targets KDE Plasma desktops; other desktops are skipped."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: sleep_policy
+      linux:
+        methods:
+          - type: builtin
+            action: sleep_policy
 
   - id: wallpaper
     name: Apply Initra Wallpaper
@@ -1176,6 +1313,41 @@ items:
         methods:
           - type: builtin
             action: tweak_security
+
+  - id: simplewall
+    name: simplewall
+    category: tweaks
+    description: Lightweight outbound firewall control utility for Windows.
+    platforms: [windows]
+    notes:
+      - "Useful for advanced users, but it can block remote support or app traffic if configured too aggressively."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Henry++.simplewall -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Henry++.simplewall
+
+  - id: nilesoft-shell
+    name: Nilesoft Shell
+    category: tweaks
+    description: Windows 10 context-menu enhancement with a more modern style.
+    platforms: [windows]
+    notes:
+      - "Shown only on Windows 10 because it is mainly useful there."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Nilesoft.Shell -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Nilesoft.Shell
+            requires: [windows, windows10]
 
   - id: feature-wsl
     name: WSL + Debian
