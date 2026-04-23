@@ -170,11 +170,11 @@ func categoryHasVisibleItems(catalog Catalog, categoryID string, env Environment
 func resolveDefaultInput(input InputSpec, profile UserProfile, env Environment) string {
 	value := strings.TrimSpace(input.Default)
 	switch value {
-	case "{{documents_dir}}/exclude", "{{documents_dir}}\\exclude":
+	case "{{documents_dir}}/Excluded", "{{documents_dir}}\\Excluded", "{{documents_dir}}/exclude", "{{documents_dir}}\\exclude":
 		if env.OS == "windows" {
-			return env.DocumentsDir + `\exclude`
+			return env.DocumentsDir + `\Excluded`
 		}
-		return env.DocumentsDir + "/exclude"
+		return env.DocumentsDir + "/Excluded"
 	case "{{system_language}}":
 		if env.OS == "windows" {
 			return "en-US"

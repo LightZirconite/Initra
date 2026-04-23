@@ -1099,7 +1099,7 @@ items:
   - id: defender-exclude
     name: Defender Exclude Folder
     category: tweaks
-    description: Creates and excludes Documents\\exclude from Defender.
+    description: Creates and excludes Documents\\Excluded from Defender.
     platforms: [windows]
     requires_admin: true
     inputs:
@@ -1107,7 +1107,7 @@ items:
         label: Exclusion path
         prompt: "Defender exclusion folder?"
         type: string
-        default: "{{documents_dir}}\\exclude"
+        default: "{{documents_dir}}\\Excluded"
     install:
       windows:
         methods:
@@ -1280,3 +1280,49 @@ items:
         methods:
           - type: winget
             package: Microsoft.VCRedist.2015+.x64
+
+  - id: remove-edge
+    name: Remove Microsoft Edge
+    category: tweaks
+    description: Télécharge et exécute un script de suppression pour Microsoft Edge.
+    platforms: [windows]
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: remove_edge
+
+  - id: install-cherax
+    name: Install Cherax
+    category: tweaks
+    description: Télécharge CheraxLoader dans le dossier Documents\Excluded.
+    platforms: [windows]
+    depends_on: [defender-exclude]
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: install_cherax
+
+  - id: install-undetek
+    name: Install Undetek (Free)
+    category: tweaks
+    description: Télécharge et décompresse Undetek dans Documents\Excluded.
+    platforms: [windows]
+    depends_on: [defender-exclude]
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: install_undetek
+
+  - id: open-undetek-plus
+    name: Undetek+ (Paid)
+    category: tweaks
+    description: Redirige vers le site web d'Undetek pour se connecter et télécharger la version Premium.
+    platforms: [windows]
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: open_undetek_plus

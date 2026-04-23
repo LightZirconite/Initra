@@ -887,6 +887,14 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return runSecurityTweaks(ctx, env, logger)
 	case "feature_wsl":
 		return enableFeatureWSL(ctx, env, logger)
+	case "remove_edge":
+		return removeEdge(ctx, env, logger)
+	case "install_cherax":
+		return installCherax(ctx, env, logger)
+	case "install_undetek":
+		return installUndetek(ctx, env, logger)
+	case "open_undetek_plus":
+		return openUndetekPlusLink(ctx, env, logger)
 	case "feature_hyperv":
 		return runShellCommands(ctx, env, logger, []string{`Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart`}, nil)
 	case "feature_sandbox":
@@ -1379,6 +1387,7 @@ func enableRemoteDesktop(ctx context.Context, env Environment, logger *Logger) e
 	script := `
 $ErrorActionPreference = 'Stop'
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f | Out-Null
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f | Out-Null
 try { Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue | Out-Null } catch {}
 cmd /c 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes' | Out-Null
 `
@@ -1864,12 +1873,83 @@ func configureDefenderExclusion(ctx context.Context, env Environment, logger *Lo
 		return nil
 	}
 	if path == "" {
-		path = filepath.Join(env.DocumentsDir, "exclude")
+		path = filepath.Join(env.DocumentsDir, "Excluded")
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
 	return runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf(`Add-MpPreference -ExclusionPath '%s'`, path))
+}
+
+func removeEdge(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	excludedDir := filepath.Join(env.DocumentsDir, "Excluded")
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		return err
+	}
+	
+	exePath := filepath.Join(excludedDir, "Remove-Edge.exe")
+	url := "https://github.com/ShadowWhisperer/Remove-MS-Edge/releases/latest/download/Remove-Edge.exe"
+	if err := downloadFile(ctx, url, exePath); err != nil {
+		return err
+	}
+	
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'SilentlyContinue'
+Stop-Process -Name "smartscreen" -Force
+Start-Process -FilePath '%s' -Wait -Verb RunAs
+`, exePath)
+	return runWindowsPowerShellScript(ctx, logger, script)
+}
+
+func installCherax(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	excludedDir := filepath.Join(env.DocumentsDir, "Excluded")
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		return err
+	}
+	
+	exePath := filepath.Join(excludedDir, "CheraxLoader.exe")
+	url := "https://cherax.menu/cdn/files/CheraxLoader.exe"
+	return downloadFile(ctx, url, exePath)
+}
+
+func installUndetek(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	excludedDir := filepath.Join(env.DocumentsDir, "Excluded")
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		return err
+	}
+	
+	zipPath := filepath.Join(excludedDir, "undetek.zip")
+	url := "https://undetek.com/download/download.php"
+	if err := downloadFile(ctx, url, zipPath); err != nil {
+		return err
+	}
+	
+	destPath := filepath.Join(excludedDir, "Undetek")
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+Expand-Archive -Force -Path '%s' -DestinationPath '%s'
+`, zipPath, destPath)
+	if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
+		return err
+	}
+	return os.Remove(zipPath)
+}
+
+func openUndetekPlusLink(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	url := "https://undetek.com/my-account/downloads/"
+	return runProcess(ctx, env, logger, "cmd", "/c", "start", "", url)
 }
 
 func runPrivacyTweaks(ctx context.Context, env Environment, logger *Logger) error {
@@ -1904,7 +1984,8 @@ func runGamingTweaks(ctx context.Context, env Environment, logger *Logger) error
 func runSecurityTweaks(ctx context.Context, env Environment, logger *Logger) error {
 	return runShellCommands(ctx, env, logger, []string{
 		`Set-MpPreference -PUAProtection Enabled`,
-		`reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Warn /f`,
+		`reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Off /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableSmartScreen /t REG_DWORD /d 0 /f`,
 	}, nil)
 }
 
