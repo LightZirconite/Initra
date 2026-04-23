@@ -1,9 +1,11 @@
 package setup
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadCatalog(t *testing.T) {
@@ -115,5 +117,114 @@ func TestProfileDependencySatisfied(t *testing.T) {
 	profile.Selected["spotify"] = true
 	if !profileDependencySatisfied(item, profile) {
 		t.Fatalf("expected dependency to be satisfied when spotify is selected")
+	}
+}
+
+func TestDefaultSelectionForItemReflectsProfile(t *testing.T) {
+	profile := newProfile("generic")
+	profile.Selected["firefox"] = true
+	profile.SelectionSource["firefox"] = selectionPresetSelected
+
+	if !defaultSelectionForItem(Item{ID: "firefox"}, profile) {
+		t.Fatalf("expected preset-selected item to default to yes")
+	}
+	if defaultSelectionForItem(Item{ID: "proton-vpn"}, profile) {
+		t.Fatalf("expected non-selected item to default to no")
+	}
+}
+
+func TestBuildPlanDoesNotIncludeUnselectedProtonVPN(t *testing.T) {
+	catalog := Catalog{
+		Categories: []Category{{ID: "media", Name: "Media"}},
+		Items: []Item{
+			{
+				ID:          "proton-vpn",
+				Name:        "Proton VPN",
+				Category:    "media",
+				Platforms:   []string{"windows"},
+				Description: "VPN client",
+				Install: map[string]InstallSpec{
+					"windows": {Methods: []Method{{Type: "winget", Package: "Proton.ProtonVPN"}}},
+				},
+			},
+		},
+	}
+	catalog.index()
+	env := Environment{OS: "windows"}
+	profile := newProfile("generic")
+
+	plan, err := buildPlan(catalog, env, profile, &Logger{})
+	if err != nil {
+		t.Fatalf("buildPlan() error = %v", err)
+	}
+	if len(plan.Steps) != 0 {
+		t.Fatalf("expected no steps for unselected proton-vpn, got %d", len(plan.Steps))
+	}
+}
+
+func TestParseWingetQueryDetected(t *testing.T) {
+	output := `
+Name          Id                 Version Available Source
+---------------------------------------------------------
+Proton VPN    Proton.ProtonVPN   3.6.0             winget
+`
+	if !parseWingetQueryDetected("Proton.ProtonVPN", output) {
+		t.Fatalf("expected winget list output to detect package")
+	}
+	if parseWingetQueryDetected("Proton.ProtonVPN", "No installed package found matching input criteria.") {
+		t.Fatalf("expected missing package output to return false")
+	}
+}
+
+func TestParseWingetUpgradeAvailable(t *testing.T) {
+	output := `
+Name          Id                 Version Available Source
+---------------------------------------------------------
+Proton VPN    Proton.ProtonVPN   3.6.0   3.7.0     winget
+`
+	if !parseWingetUpgradeAvailable("Proton.ProtonVPN", output) {
+		t.Fatalf("expected upgrade output to detect available update")
+	}
+	if parseWingetUpgradeAvailable("Proton.ProtonVPN", "No available upgrade found.") {
+		t.Fatalf("expected no-upgrade output to return false")
+	}
+}
+
+func TestDescribeResolvedAction(t *testing.T) {
+	step := ResolvedStep{
+		Method:        Method{Type: "winget", Package: "Proton.ProtonVPN"},
+		PlannedAction: stepActionUpgrade,
+	}
+	if got := describeResolvedAction(step); got != "winget upgrade Proton.ProtonVPN" {
+		t.Fatalf("unexpected resolved action: %s", got)
+	}
+}
+
+func TestSessionReportSerialization(t *testing.T) {
+	report := SessionReport{
+		Version:    1,
+		Status:     "success",
+		StartedAt:  time.Now().Add(-2 * time.Minute),
+		FinishedAt: time.Now(),
+		Profile:    newProfile("generic"),
+		Plan:       Plan{Preset: "generic"},
+		StepResults: []StepResult{
+			{ItemID: "firefox", ItemName: "Firefox", Outcome: stepOutcomeInstalled},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "report.json")
+	if err := saveSessionReport(path, &report); err != nil {
+		t.Fatalf("saveSessionReport() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"status": "success"`) {
+		t.Fatalf("expected serialized report status, got %s", text)
+	}
+	if !strings.Contains(text, `"item_id": "firefox"`) {
+		t.Fatalf("expected serialized step result, got %s", text)
 	}
 }

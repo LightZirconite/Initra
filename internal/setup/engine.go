@@ -64,7 +64,7 @@ func Run(args []string, version string) error {
 	}
 
 	if opts.Resume {
-		return resumeExecution(context.Background(), paths, env, logger, opts.BaseURL)
+		return resumeExecution(context.Background(), paths, env, logger, opts.BaseURL, !opts.NonInteractive)
 	}
 
 	profile, err := loadWorkingProfile(catalog, env, paths, opts)
@@ -82,6 +82,7 @@ func Run(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	printSelectionSummary(catalog, env, profile)
 	printPlan(plan)
 	if opts.DryRun {
 		return nil
@@ -95,7 +96,7 @@ func Run(args []string, version string) error {
 			return nil
 		}
 	}
-	return executePlan(context.Background(), plan, paths, env, logger, opts.BaseURL)
+	return executePlan(context.Background(), plan, paths, env, logger, opts.BaseURL, !opts.NonInteractive)
 }
 
 func parseCLI(args []string) (CLIOptions, error) {
@@ -126,6 +127,7 @@ func loadWorkingProfile(catalog Catalog, env Environment, paths Paths, opts CLIO
 	}
 	for _, itemID := range preset.Selected {
 		base.Selected[itemID] = true
+		base.SelectionSource[itemID] = selectionPresetSelected
 	}
 	for key, value := range preset.Values {
 		base.Inputs[key] = value
@@ -138,11 +140,25 @@ func loadWorkingProfile(catalog Catalog, env Environment, paths Paths, opts CLIO
 		if base.Selected == nil {
 			base.Selected = map[string]bool{}
 		}
+		if base.SelectionSource == nil {
+			base.SelectionSource = map[string]string{}
+		}
 		if base.Inputs == nil {
 			base.Inputs = map[string]string{}
 		}
 		if base.Preset == "" {
 			base.Preset = opts.Preset
+		}
+		for itemID, selected := range base.Selected {
+			if !selected {
+				if base.SelectionSource[itemID] == "" {
+					base.SelectionSource[itemID] = selectionManualNo
+				}
+				continue
+			}
+			if base.SelectionSource[itemID] == "" {
+				base.SelectionSource[itemID] = selectionManualYes
+			}
 		}
 	}
 
@@ -185,6 +201,7 @@ func buildPlan(catalog Catalog, env Environment, profile UserProfile, logger *Lo
 func resolveStep(item Item, env Environment, profile UserProfile, logger *Logger) (ResolvedStep, []string, error) {
 	step := ResolvedStep{Item: item, Inputs: map[string]string{}}
 	warnings := append([]string{}, item.Notes...)
+	step.SelectionState = selectionStateForItem(item, profile)
 	for _, input := range item.Inputs {
 		step.Inputs[input.ID] = resolveDefaultInput(input, profile, env)
 		if profile.Inputs[input.ID] != "" {
@@ -194,18 +211,14 @@ func resolveStep(item Item, env Environment, profile UserProfile, logger *Logger
 
 	if !itemSupportedOn(item, env) {
 		step.SkipReason = "unsupported on current platform"
+		step.PlannedAction = stepActionSkip
 		return step, append(warnings, fmt.Sprintf("%s is not supported on %s and will be skipped.", item.Name, env.OS)), nil
-	}
-
-	if installed, err := detectItemInstalled(item, env); err == nil && installed {
-		step.AlreadyPresent = true
-		step.EstimatedAction = "already present"
-		return step, warnings, nil
 	}
 
 	platformSpec, ok := item.Install[env.OS]
 	if !ok {
 		step.SkipReason = "no install method for current platform"
+		step.PlannedAction = stepActionSkip
 		return step, append(warnings, fmt.Sprintf("%s has no install method on %s and will be skipped.", item.Name, env.OS)), nil
 	}
 
@@ -213,13 +226,23 @@ func resolveStep(item Item, env Environment, profile UserProfile, logger *Logger
 	warnings = append(warnings, methodWarnings...)
 	if method == nil {
 		step.SkipReason = "no compatible install method"
+		step.PlannedAction = stepActionSkip
 		return step, append(warnings, fmt.Sprintf("%s has no compatible install method on this machine and will be skipped.", item.Name)), nil
 	}
 
-	warnings = append(warnings, extraItemWarnings(item, env, step.Inputs)...)
 	step.Method = *method
+	action, err := resolvePlannedAction(item, *method, env, logger)
+	if err != nil {
+		logger.Println("step action detection failed", item.ID, err)
+	}
+	step.PlannedAction = action
+	switch action {
+	case stepActionAlreadyPresent, stepActionAlreadyUpToDate:
+		step.AlreadyPresent = true
+	}
+	warnings = append(warnings, extraItemWarnings(item, env, step.Inputs)...)
 	step.RequiresReboot = method.Reboot
-	step.EstimatedAction = describeMethod(*method)
+	step.EstimatedAction = describeResolvedAction(step)
 	return step, warnings, nil
 }
 
@@ -354,6 +377,51 @@ func methodCompatible(method Method, env Environment) bool {
 	return true
 }
 
+func selectionStateForItem(item Item, profile UserProfile) string {
+	if item.AutoApply {
+		return selectionAutoApply
+	}
+	if state := strings.TrimSpace(profile.SelectionSource[item.ID]); state != "" {
+		return state
+	}
+	if profile.Selected[item.ID] {
+		return selectionManualYes
+	}
+	return selectionManualNo
+}
+
+func resolvePlannedAction(item Item, method Method, env Environment, logger *Logger) (string, error) {
+	switch {
+	case method.Type == "winget" && env.OS == "windows":
+		state, err := detectWingetPackageState(item, method.Package, env, logger)
+		if err != nil {
+			return stepActionInstall, err
+		}
+		switch state {
+		case stepActionUpgrade:
+			return stepActionUpgrade, nil
+		case stepActionAlreadyUpToDate:
+			return stepActionAlreadyUpToDate, nil
+		case stepActionAlreadyPresent:
+			return stepActionAlreadyPresent, nil
+		default:
+			return stepActionInstall, nil
+		}
+	default:
+		installed, err := detectItemInstalled(item, env)
+		if err != nil {
+			return stepActionInstall, err
+		}
+		if installed {
+			if env.OS == "linux" {
+				return stepActionAlreadyPresent, nil
+			}
+			return stepActionAlreadyPresent, nil
+		}
+	}
+	return stepActionInstall, nil
+}
+
 func detectItemInstalled(item Item, env Environment) (bool, error) {
 	spec, ok := item.Detect[env.OS]
 	if !ok || len(spec.Any) == 0 {
@@ -381,6 +449,149 @@ func runDetectionCommand(command string, env Environment) (bool, error) {
 	return true, nil
 }
 
+func detectWingetPackageState(item Item, packageID string, env Environment, logger *Logger) (string, error) {
+	if strings.TrimSpace(packageID) == "" {
+		return stepActionInstall, nil
+	}
+	listDetected, listOutput, listErr := runWingetQuery("list", packageID)
+	if listErr == nil && listDetected {
+		upgradeAvailable, upgradeErr := wingetUpgradeAvailable(packageID)
+		if upgradeErr != nil {
+			logger.Println("winget upgrade detection failed", packageID, upgradeErr)
+			return stepActionAlreadyPresent, nil
+		}
+		if upgradeAvailable {
+			return stepActionUpgrade, nil
+		}
+		return stepActionAlreadyUpToDate, nil
+	}
+	if listErr != nil {
+		logger.Println("winget list detection failed", packageID, listErr)
+	}
+	if registryDetected, regErr := detectWindowsInstalledViaRegistry(item, packageID); regErr == nil && registryDetected {
+		return stepActionAlreadyPresent, nil
+	} else if regErr != nil {
+		logger.Println("registry install detection failed", packageID, regErr)
+	}
+	if parseWingetQueryDetected(packageID, listOutput) {
+		return stepActionAlreadyPresent, nil
+	}
+	return stepActionInstall, nil
+}
+
+func runWingetQuery(command, packageID string) (bool, string, error) {
+	output, err := runOutput("winget", command, "--id", packageID, "-e", "--disable-interactivity")
+	if err != nil {
+		return false, output, err
+	}
+	return parseWingetQueryDetected(packageID, output), output, nil
+}
+
+func wingetUpgradeAvailable(packageID string) (bool, error) {
+	output, err := runOutput("winget", "upgrade", "--id", packageID, "-e", "--disable-interactivity")
+	if err != nil {
+		lower := strings.ToLower(err.Error())
+		if strings.Contains(lower, "no installed package found") {
+			return false, nil
+		}
+		return false, err
+	}
+	return parseWingetUpgradeAvailable(packageID, output), nil
+}
+
+func parseWingetQueryDetected(packageID, output string) bool {
+	lower := strings.ToLower(strings.TrimSpace(output))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "no installed package found matching input criteria") {
+		return false
+	}
+	if strings.Contains(lower, strings.ToLower(packageID)) {
+		return true
+	}
+	return false
+}
+
+func parseWingetUpgradeAvailable(packageID, output string) bool {
+	lower := strings.ToLower(strings.TrimSpace(output))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "no available upgrade found") {
+		return false
+	}
+	if strings.Contains(lower, "no installed package found matching input criteria") {
+		return false
+	}
+	return strings.Contains(lower, strings.ToLower(packageID))
+}
+
+func detectWindowsInstalledViaRegistry(item Item, packageID string) (bool, error) {
+	tokens := wingetRegistrySearchTokens(item, packageID)
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$tokens = @(%s)
+$paths = @(
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$found = $false
+foreach ($path in $paths) {
+  Get-ItemProperty -Path $path -ErrorAction SilentlyContinue | ForEach-Object {
+    $blob = @($_.DisplayName, $_.Publisher, $_.UninstallString, $_.DisplayIcon) -join ' '
+    $blob = $blob.ToLowerInvariant()
+    foreach ($token in $tokens) {
+      if ($token -and $blob.Contains($token)) {
+        $found = $true
+        break
+      }
+    }
+    if ($found) { break }
+  }
+  if ($found) { break }
+}
+if ($found) { 'true' } else { 'false' }
+`, quotedPowerShellArray(tokens))
+	output, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(strings.TrimSpace(output), "true"), nil
+}
+
+func wingetRegistrySearchTokens(item Item, packageID string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(packageID))
+	lastSegment := normalized
+	if idx := strings.LastIndex(normalized, "."); idx >= 0 && idx+1 < len(normalized) {
+		lastSegment = normalized[idx+1:]
+	}
+	nameToken := strings.ToLower(strings.TrimSpace(item.Name))
+	tokens := uniqueStrings([]string{
+		strings.ReplaceAll(normalized, ".", " "),
+		lastSegment,
+		strings.ReplaceAll(lastSegment, "-", " "),
+		nameToken,
+	})
+	return tokens
+}
+
+func quotedPowerShellArray(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		quoted = append(quoted, "'"+strings.ReplaceAll(value, "'", "''")+"'")
+	}
+	if len(quoted) == 0 {
+		return "''"
+	}
+	return strings.Join(quoted, ", ")
+}
+
 func describeMethod(method Method) string {
 	switch method.Type {
 	case "winget":
@@ -398,16 +609,59 @@ func describeMethod(method Method) string {
 	}
 }
 
+func describeResolvedAction(step ResolvedStep) string {
+	switch step.PlannedAction {
+	case stepActionInstall:
+		return describeMethod(step.Method)
+	case stepActionUpgrade:
+		if step.Method.Type == "winget" {
+			return "winget upgrade " + step.Method.Package
+		}
+		return "upgrade"
+	case stepActionAlreadyUpToDate:
+		return stepActionAlreadyUpToDate
+	case stepActionAlreadyPresent:
+		return stepActionAlreadyPresent
+	case stepActionSkip:
+		return stepActionSkip
+	default:
+		return describeMethod(step.Method)
+	}
+}
+
+func printSelectionSummary(catalog Catalog, env Environment, profile UserProfile) {
+	fmt.Println()
+	fmt.Println("Selection summary")
+	fmt.Println("-----------------")
+	for _, category := range catalog.Categories {
+		hasItems := false
+		for _, item := range catalog.Items {
+			if item.Category != category.ID || !itemVisibleOn(item, env) || (len(item.DependsOn) > 0 && !profileDependencySatisfied(item, profile)) {
+				continue
+			}
+			if !hasItems {
+				fmt.Printf("[%s]\n", category.Name)
+				hasItems = true
+			}
+			fmt.Printf("  - %s: %s\n", item.Name, selectionStateForItem(item, profile))
+		}
+	}
+	fmt.Println()
+}
+
 func printPlan(plan Plan) {
 	fmt.Println()
 	fmt.Println("Execution plan")
 	fmt.Println("--------------")
 	fmt.Printf("Preset: %s\n", plan.Preset)
 	alreadyPresent := 0
+	alreadyUpToDate := 0
 	skipped := 0
 	runnable := 0
 	for _, step := range plan.Steps {
 		switch {
+		case step.PlannedAction == stepActionAlreadyUpToDate:
+			alreadyUpToDate++
 		case step.AlreadyPresent:
 			alreadyPresent++
 		case step.SkipReason != "":
@@ -416,7 +670,7 @@ func printPlan(plan Plan) {
 			runnable++
 		}
 	}
-	fmt.Printf("Summary: %d to run, %d already present, %d skipped\n", runnable, alreadyPresent, skipped)
+	fmt.Printf("Summary: %d to run, %d already present, %d already up to date, %d skipped\n", runnable, alreadyPresent, alreadyUpToDate, skipped)
 	if len(plan.Warnings) > 0 {
 		fmt.Println("Warnings:")
 		for _, warning := range uniqueStrings(plan.Warnings) {
@@ -431,45 +685,69 @@ func printPlan(plan Plan) {
 			fmt.Printf("  [%s]\n", phaseDisplayName(step.Phase))
 		}
 		status := step.EstimatedAction
-		if step.AlreadyPresent {
-			status = "already present"
-		}
 		if step.SkipReason != "" {
 			status = "skip: " + step.SkipReason
 		}
-		fmt.Printf("  - %s: %s\n", step.Item.Name, status)
+		fmt.Printf("  - %s: %s (%s)\n", step.Item.Name, status, step.SelectionState)
 	}
 	fmt.Println()
 }
 
-func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, logger *Logger, baseURL string) error {
+func stepShouldRun(step ResolvedStep) bool {
+	if step.SkipReason != "" {
+		return false
+	}
+	switch step.PlannedAction {
+	case stepActionInstall, stepActionUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
+func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, logger *Logger, baseURL string, interactive bool) error {
+	startedAt := time.Now()
+	report, reportPath := newSessionReport(plan, paths, logger, startedAt)
 	state := RunState{
 		Version:    2,
-		StartedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		StartedAt:  startedAt,
+		UpdatedAt:  startedAt,
 		Plan:       plan,
 		NextStep:   0,
 		BinaryPath: currentBinaryPath(),
 		BaseURL:    baseURL,
 		Attempts:   map[string]int{},
+		ReportPath: reportPath,
 	}
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
+	if err := saveSessionReport(reportPath, &report); err != nil {
+		return err
+	}
 	if err := waitForNetwork(ctx, logger, baseURL); err != nil {
+		report.Status = "error"
+		report.Error = err.Error()
+		report.FinishedAt = time.Now()
+		_ = saveSessionReport(reportPath, &report)
 		return err
 	}
 	stopHostedSession := func() {}
 	if env.OS == "windows" {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println("Setup session is now active. The window is maximized and kept on top.")
+		fmt.Println("Setup session is now active. The window is locked in strict focus mode.")
 		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
 	}
 	defer stopHostedSession()
 
 	if env.OS == "windows" && selectedNeedsWinget(plan) {
 		if err := ensureWinget(ctx, env, logger); err != nil {
+			report.Status = "error"
+			report.Error = err.Error()
+			report.FinishedAt = time.Now()
+			_ = saveSessionReport(reportPath, &report)
+			printFinalSessionScreen(report, interactive)
 			return err
 		}
 	}
@@ -477,7 +755,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	restoreCreated := false
 	totalRunnable := 0
 	for _, step := range plan.Steps {
-		if !step.AlreadyPresent && step.SkipReason == "" {
+		if stepShouldRun(step) {
 			totalRunnable++
 		}
 	}
@@ -485,11 +763,15 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	currentPhase := ""
 	for idx := range plan.Steps {
 		step := plan.Steps[idx]
-		if step.AlreadyPresent || step.SkipReason != "" {
+		if !stepShouldRun(step) {
+			recordStaticStepResult(&report, step)
 			state.NextStep = idx + 1
 			state.Completed = append(state.Completed, step.Item.ID)
 			state.UpdatedAt = time.Now()
 			if err := saveJSON(paths.StatePath, state); err != nil {
+				return err
+			}
+			if err := saveSessionReport(reportPath, &report); err != nil {
 				return err
 			}
 			continue
@@ -507,9 +789,17 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		fmt.Printf("==> [%d/%d] %s\n", currentRunnable, totalRunnable, step.Item.Name)
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
+		startedStep := time.Now()
 		if err := executeStep(ctx, step, env, logger, baseURL); err != nil {
+			recordExecutedStepResult(&report, step, startedStep, err)
+			report.Status = "error"
+			report.Error = fmt.Sprintf("%s: %v", step.Item.Name, err)
+			report.FinishedAt = time.Now()
+			_ = saveSessionReport(reportPath, &report)
+			printFinalSessionScreen(report, interactive)
 			return fmt.Errorf("%s: %w", step.Item.Name, err)
 		}
+		recordExecutedStepResult(&report, step, startedStep, nil)
 
 		if env.OS == "windows" && isMaintenanceLoopStep(step) {
 			rebootPending, err := windowsRebootPending(ctx, logger)
@@ -517,6 +807,12 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 				state.PendingReboot = true
 				state.NextStep = idx
 				state.UpdatedAt = time.Now()
+				report.Status = "partial"
+				report.PendingReboot = true
+				report.FinishedAt = time.Now()
+				if err := saveSessionReport(reportPath, &report); err != nil {
+					return err
+				}
 				if err := persistRebootState(paths, logger, &state, "Windows requested another update reboot cycle. Initra will resume automatically."); err != nil {
 					return err
 				}
@@ -528,6 +824,12 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 			state.PendingReboot = true
 			state.NextStep = idx + 1
 			state.UpdatedAt = time.Now()
+			report.Status = "partial"
+			report.PendingReboot = true
+			report.FinishedAt = time.Now()
+			if err := saveSessionReport(reportPath, &report); err != nil {
+				return err
+			}
 			if err := persistRebootState(paths, logger, &state, fmt.Sprintf("%s requires a reboot. Initra will resume automatically.", step.Item.Name)); err != nil {
 				return err
 			}
@@ -540,15 +842,23 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		if err := saveJSON(paths.StatePath, state); err != nil {
 			return err
 		}
+		if err := saveSessionReport(reportPath, &report); err != nil {
+			return err
+		}
 	}
 
 	_ = os.Remove(paths.StatePath)
 	_ = removeResumeHook(paths)
-	fmt.Println("Initra setup complete.")
+	report.Status = "success"
+	report.FinishedAt = time.Now()
+	if err := saveSessionReport(reportPath, &report); err != nil {
+		return err
+	}
+	printFinalSessionScreen(report, interactive)
 	return nil
 }
 
-func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *Logger, baseURL string) error {
+func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *Logger, baseURL string, interactive bool) error {
 	var state RunState
 	if err := loadJSON(paths.StatePath, &state); err != nil {
 		if isMissing(err) {
@@ -566,18 +876,26 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
 		return err
 	}
+	report := SessionReport{}
+	if state.ReportPath != "" {
+		_ = loadJSON(state.ReportPath, &report)
+	}
+	if report.ReportPath == "" {
+		report, state.ReportPath = newSessionReport(state.Plan, paths, logger, state.StartedAt)
+	}
 	stopHostedSession := func() {}
 	if env.OS == "windows" {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println("Resumed setup session is active again. The window is maximized and kept on top.")
+		fmt.Println("Resumed setup session is active again. The window is locked in strict focus mode.")
 		fmt.Println("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows.")
 	}
 	defer stopHostedSession()
 	currentPhase := ""
 	for idx := state.NextStep; idx < len(state.Plan.Steps); idx++ {
 		step := state.Plan.Steps[idx]
-		if step.AlreadyPresent || step.SkipReason != "" {
+		if !stepShouldRun(step) {
+			recordStaticStepResult(&report, step)
 			state.NextStep = idx + 1
 			continue
 		}
@@ -588,9 +906,17 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		fmt.Printf("==> [resume %d/%d] %s\n", idx+1, len(state.Plan.Steps), step.Item.Name)
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
+		startedStep := time.Now()
 		if err := executeStep(ctx, step, env, logger, state.BaseURL); err != nil {
+			recordExecutedStepResult(&report, step, startedStep, err)
+			report.Status = "error"
+			report.Error = fmt.Sprintf("resume %s: %v", step.Item.Name, err)
+			report.FinishedAt = time.Now()
+			_ = saveSessionReport(state.ReportPath, &report)
+			printFinalSessionScreen(report, interactive)
 			return fmt.Errorf("resume %s: %w", step.Item.Name, err)
 		}
+		recordExecutedStepResult(&report, step, startedStep, nil)
 
 		if env.OS == "windows" && isMaintenanceLoopStep(step) {
 			rebootPending, err := windowsRebootPending(ctx, logger)
@@ -598,6 +924,12 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 				state.PendingReboot = true
 				state.NextStep = idx
 				state.UpdatedAt = time.Now()
+				report.Status = "partial"
+				report.PendingReboot = true
+				report.FinishedAt = time.Now()
+				if err := saveSessionReport(state.ReportPath, &report); err != nil {
+					return err
+				}
 				if err := persistRebootState(paths, logger, &state, "Windows requested another update reboot cycle. Initra will resume automatically."); err != nil {
 					return err
 				}
@@ -609,6 +941,12 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 			state.PendingReboot = true
 			state.NextStep = idx + 1
 			state.UpdatedAt = time.Now()
+			report.Status = "partial"
+			report.PendingReboot = true
+			report.FinishedAt = time.Now()
+			if err := saveSessionReport(state.ReportPath, &report); err != nil {
+				return err
+			}
 			if err := persistRebootState(paths, logger, &state, fmt.Sprintf("%s requires a reboot. Initra will resume automatically.", step.Item.Name)); err != nil {
 				return err
 			}
@@ -620,34 +958,74 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		if err := saveJSON(paths.StatePath, state); err != nil {
 			return err
 		}
+		if err := saveSessionReport(state.ReportPath, &report); err != nil {
+			return err
+		}
 	}
 	_ = os.Remove(paths.StatePath)
 	_ = removeResumeHook(paths)
-	fmt.Println("Resumed execution completed.")
+	report.Status = "success"
+	report.FinishedAt = time.Now()
+	if err := saveSessionReport(state.ReportPath, &report); err != nil {
+		return err
+	}
+	printFinalSessionScreen(report, interactive)
 	return nil
 }
 
 func executeStep(ctx context.Context, step ResolvedStep, env Environment, logger *Logger, baseURL string) error {
-	switch step.Method.Type {
-	case "winget":
-		return runWingetInstall(ctx, env, logger, step.Method.Package)
-	case "apt":
-		return runLinuxPackages(ctx, env, logger, "apt", step.Method)
-	case "dnf":
-		return runLinuxPackages(ctx, env, logger, "dnf", step.Method)
-	case "pacman":
-		return runLinuxPackages(ctx, env, logger, "pacman", step.Method)
-	case "flatpak":
-		return runLinuxPackages(ctx, env, logger, "flatpak", step.Method)
-	case "direct":
-		return runDirectInstall(ctx, env, logger, step.Method, step.Inputs)
-	case "shell":
-		return runShellCommands(ctx, env, logger, step.Method.Commands, step.Inputs)
-	case "builtin":
-		return runBuiltin(ctx, env, logger, step, baseURL)
-	default:
-		return fmt.Errorf("unsupported method type %q", step.Method.Type)
+	run := func() error {
+		switch step.Method.Type {
+		case "winget":
+			return runWingetAction(ctx, env, logger, step.Method.Package, step.PlannedAction)
+		case "apt":
+			return runLinuxPackages(ctx, env, logger, "apt", step.Method)
+		case "dnf":
+			return runLinuxPackages(ctx, env, logger, "dnf", step.Method)
+		case "pacman":
+			return runLinuxPackages(ctx, env, logger, "pacman", step.Method)
+		case "flatpak":
+			return runLinuxPackages(ctx, env, logger, "flatpak", step.Method)
+		case "direct":
+			return runDirectInstall(ctx, env, logger, step.Method, step.Inputs)
+		case "shell":
+			return runShellCommands(ctx, env, logger, step.Method.Commands, step.Inputs)
+		case "builtin":
+			return runBuiltin(ctx, env, logger, step, baseURL)
+		default:
+			return fmt.Errorf("unsupported method type %q", step.Method.Type)
+		}
 	}
+	var err error
+	if env.OS == "windows" && stepInteraction(step) == methodInteractionHelper {
+		err = withWindowsFocusRelaxed(ctx, logger, run)
+	} else {
+		err = run()
+	}
+	if err != nil {
+		return err
+	}
+	if env.OS == "windows" && step.Item.ID == "proton-vpn" {
+		_ = stopProtonVPNProcesses(ctx, logger)
+		_ = runWindowsStartupCleanup(ctx, env, logger)
+	}
+	return nil
+}
+
+func stepInteraction(step ResolvedStep) string {
+	if strings.TrimSpace(step.Method.Interaction) == "" {
+		return methodInteractionUnattended
+	}
+	return step.Method.Interaction
+}
+
+func runWingetAction(ctx context.Context, env Environment, logger *Logger, id, action string) error {
+	command := "install"
+	if action == stepActionUpgrade {
+		command = "upgrade"
+	}
+	args := []string{command, "--id", id, "-e", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}
+	return runProcess(ctx, env, logger, "winget", args...)
 }
 
 func selectedNeedsWinget(plan Plan) bool {
@@ -657,11 +1035,6 @@ func selectedNeedsWinget(plan Plan) bool {
 		}
 	}
 	return false
-}
-
-func runWingetInstall(ctx context.Context, env Environment, logger *Logger, id string) error {
-	args := []string{"install", "--id", id, "-e", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}
-	return runProcess(ctx, env, logger, "winget", args...)
 }
 
 func runLinuxPackages(ctx context.Context, env Environment, logger *Logger, manager string, method Method) error {
@@ -1411,11 +1784,12 @@ func openLogger(logDir string) (*Logger, error) {
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(logDir, time.Now().Format("20060102-150405")+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	path := filepath.Join(logDir, time.Now().Format("20060102-150405")+".log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	return &Logger{file: file}, nil
+	return &Logger{file: file, path: path}, nil
 }
 
 func (l *Logger) Println(values ...any) {
@@ -1430,6 +1804,13 @@ func (l *Logger) Close() error {
 		return nil
 	}
 	return l.file.Close()
+}
+
+func (l *Logger) Path() string {
+	if l == nil {
+		return ""
+	}
+	return l.path
 }
 
 func runProcess(ctx context.Context, env Environment, logger *Logger, name string, args ...string) error {
@@ -1817,17 +2198,17 @@ if ($driverUpdates) {
 
 	switch {
 	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "dell"):
-		_ = runWingetInstall(ctx, env, logger, "Dell.CommandUpdate.Universal")
+		_ = runWingetAction(ctx, env, logger, "Dell.CommandUpdate.Universal", stepActionInstall)
 	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "lenovo"):
-		_ = runWingetInstall(ctx, env, logger, "Lenovo.SystemUpdate")
+		_ = runWingetAction(ctx, env, logger, "Lenovo.SystemUpdate", stepActionInstall)
 	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "hp"):
-		_ = runWingetInstall(ctx, env, logger, "HPInc.HPSupportAssistant")
+		_ = runWingetAction(ctx, env, logger, "HPInc.HPSupportAssistant", stepActionInstall)
 	}
 	if strings.Contains(strings.ToLower(env.Windows.CPUVendor), "intel") || strings.Contains(strings.ToLower(env.Windows.GPUVendor), "intel") {
-		_ = runWingetInstall(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant")
+		_ = runWingetAction(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant", stepActionInstall)
 	}
 	if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "amd") {
-		_ = runWingetInstall(ctx, env, logger, "AMD.AMDSoftwareCloudEdition")
+		_ = runWingetAction(ctx, env, logger, "AMD.AMDSoftwareCloudEdition", stepActionInstall)
 	}
 	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger)
 	_ = runProcess(ctx, env, logger, "pnputil", "/scan-devices")
@@ -1891,13 +2272,13 @@ func removeEdge(ctx context.Context, env Environment, logger *Logger) error {
 	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
 		return err
 	}
-	
+
 	exePath := filepath.Join(excludedDir, "Remove-Edge.exe")
 	url := "https://github.com/ShadowWhisperer/Remove-MS-Edge/releases/latest/download/Remove-Edge.exe"
 	if err := downloadFile(ctx, url, exePath); err != nil {
 		return err
 	}
-	
+
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'SilentlyContinue'
 Stop-Process -Name "smartscreen" -Force
@@ -1914,7 +2295,7 @@ func installCherax(ctx context.Context, env Environment, logger *Logger) error {
 	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
 		return err
 	}
-	
+
 	exePath := filepath.Join(excludedDir, "CheraxLoader.exe")
 	url := "https://cherax.menu/cdn/files/CheraxLoader.exe"
 	return downloadFile(ctx, url, exePath)
@@ -1928,13 +2309,13 @@ func installUndetek(ctx context.Context, env Environment, logger *Logger) error 
 	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
 		return err
 	}
-	
+
 	zipPath := filepath.Join(excludedDir, "undetek.zip")
 	url := "https://undetek.com/download/download.php"
 	if err := downloadFile(ctx, url, zipPath); err != nil {
 		return err
 	}
-	
+
 	destPath := filepath.Join(excludedDir, "Undetek")
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'

@@ -55,6 +55,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			if description := strings.TrimSpace(item.Description); description != "" {
 				fmt.Printf("     %s\n", description)
 			}
+			fmt.Printf("     Selection: %s\n", selectionStateForItem(item, profile))
 			if len(item.Notes) > 0 {
 				for _, note := range item.Notes {
 					note = strings.TrimSpace(note)
@@ -72,12 +73,22 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			if profile.Selected[item.ID] {
 				fmt.Println("     Preset: selected")
 			}
-			defaultValue := true
+			defaultValue := defaultSelectionForItem(item, profile)
 			answer, err := promptYesNo(reader, "     Install?", defaultValue)
 			if err != nil {
 				return profile, err
 			}
 			profile.Selected[item.ID] = answer
+			if answer {
+				if profile.SelectionSource[item.ID] == selectionPresetSelected {
+					profile.SelectionSource[item.ID] = selectionPresetSelected
+				} else {
+					profile.SelectionSource[item.ID] = selectionManualYes
+				}
+			} else {
+				profile.SelectionSource[item.ID] = selectionManualNo
+			}
+			fmt.Printf("     Final selection: %s\n", selectionStateForItem(item, profile))
 			fmt.Println()
 		}
 		fmt.Println()
@@ -113,8 +124,8 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, error) {
 	suffix := "[Enter/n]"
-	if defaultValue {
-		suffix = "[Enter/n]"
+	if !defaultValue {
+		suffix = "[y/Enter]"
 	}
 	for {
 		fmt.Printf("%s %s ", prompt, suffix)
@@ -132,8 +143,16 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, 
 		case "n", "no":
 			return false, nil
 		}
-		fmt.Println("Press Enter to accept, or type n to refuse.")
+		if defaultValue {
+			fmt.Println("Press Enter to accept, or type n to refuse.")
+		} else {
+			fmt.Println("Type y to accept, or press Enter to keep it skipped.")
+		}
 	}
+}
+
+func defaultSelectionForItem(item Item, profile UserProfile) bool {
+	return profile.Selected[item.ID]
 }
 
 func promptString(reader *bufio.Reader, prompt, defaultValue string) (string, error) {

@@ -117,13 +117,15 @@ type Method struct {
 	Reboot      bool     `yaml:"reboot" json:"reboot,omitempty"`
 	Description string   `yaml:"description" json:"description,omitempty"`
 	Action      string   `yaml:"action" json:"action,omitempty"`
+	Interaction string   `yaml:"interaction" json:"interaction,omitempty"`
 }
 
 type UserProfile struct {
-	Version  int               `json:"version"`
-	Preset   string            `json:"preset"`
-	Selected map[string]bool   `json:"selected"`
-	Inputs   map[string]string `json:"inputs"`
+	Version         int               `json:"version"`
+	Preset          string            `json:"preset"`
+	Selected        map[string]bool   `json:"selected"`
+	SelectionSource map[string]string `json:"selection_source,omitempty"`
+	Inputs          map[string]string `json:"inputs"`
 }
 
 type Environment struct {
@@ -177,6 +179,8 @@ type ResolvedStep struct {
 	Phase           string            `json:"phase"`
 	Method          Method            `json:"method"`
 	Inputs          map[string]string `json:"inputs"`
+	SelectionState  string            `json:"selection_state,omitempty"`
+	PlannedAction   string            `json:"planned_action,omitempty"`
 	SkipReason      string            `json:"skip_reason,omitempty"`
 	AlreadyPresent  bool              `json:"already_present"`
 	RequiresReboot  bool              `json:"requires_reboot"`
@@ -195,11 +199,63 @@ type RunState struct {
 	BinaryPath    string         `json:"binary_path"`
 	BaseURL       string         `json:"base_url"`
 	Attempts      map[string]int `json:"attempts,omitempty"`
+	ReportPath    string         `json:"report_path,omitempty"`
 }
 
 type Logger struct {
 	file *os.File
+	path string
 }
+
+type SessionReport struct {
+	Version       int          `json:"version"`
+	Status        string       `json:"status"`
+	StartedAt     time.Time    `json:"started_at"`
+	FinishedAt    time.Time    `json:"finished_at"`
+	Duration      string       `json:"duration"`
+	LogPath       string       `json:"log_path,omitempty"`
+	ReportPath    string       `json:"report_path,omitempty"`
+	Profile       UserProfile  `json:"profile"`
+	Plan          Plan         `json:"plan"`
+	StepResults   []StepResult `json:"step_results"`
+	Warnings      []string     `json:"warnings,omitempty"`
+	Error         string       `json:"error,omitempty"`
+	PendingReboot bool         `json:"pending_reboot,omitempty"`
+}
+
+type StepResult struct {
+	ItemID         string    `json:"item_id"`
+	ItemName       string    `json:"item_name"`
+	Phase          string    `json:"phase"`
+	SelectionState string    `json:"selection_state,omitempty"`
+	PlannedAction  string    `json:"planned_action,omitempty"`
+	Outcome        string    `json:"outcome"`
+	StartedAt      time.Time `json:"started_at"`
+	FinishedAt     time.Time `json:"finished_at"`
+	Error          string    `json:"error,omitempty"`
+}
+
+const (
+	selectionAutoApply      = "auto apply"
+	selectionPresetSelected = "preset selected"
+	selectionManualYes      = "manual yes"
+	selectionManualNo       = "manual no"
+
+	stepActionInstall         = "install"
+	stepActionUpgrade         = "upgrade"
+	stepActionAlreadyUpToDate = "already up to date"
+	stepActionAlreadyPresent  = "already present"
+	stepActionSkip            = "skip"
+
+	stepOutcomeInstalled       = "installed"
+	stepOutcomeUpdated         = "updated"
+	stepOutcomeAlreadyUpToDate = "already up to date"
+	stepOutcomeSkipped         = "skipped"
+	stepOutcomeFailed          = "failed"
+
+	methodInteractionUnattended = "unattended"
+	methodInteractionHelper     = "helper_window"
+)
 
 type manifestResponse struct {
 	Version    string            `json:"version"`
@@ -311,10 +367,11 @@ func mustAbs(path string) string {
 
 func newProfile(preset string) UserProfile {
 	return UserProfile{
-		Version:  1,
-		Preset:   preset,
-		Selected: map[string]bool{},
-		Inputs:   map[string]string{},
+		Version:         1,
+		Preset:          preset,
+		Selected:        map[string]bool{},
+		SelectionSource: map[string]string{},
+		Inputs:          map[string]string{},
 	}
 }
 
@@ -323,6 +380,9 @@ func (p UserProfile) clone() UserProfile {
 	dup.Version = p.Version
 	for key, value := range p.Selected {
 		dup.Selected[key] = value
+	}
+	for key, value := range p.SelectionSource {
+		dup.SelectionSource[key] = value
 	}
 	for key, value := range p.Inputs {
 		dup.Inputs[key] = value

@@ -874,6 +874,7 @@ items:
         methods:
           - type: builtin
             action: office
+            interaction: helper_window
 
   - id: mesh-agent
     name: Remote Support Agent
@@ -1005,6 +1006,7 @@ items:
         methods:
           - type: builtin
             action: firefox_default
+            interaction: helper_window
       linux:
         methods:
           - type: builtin
@@ -1066,6 +1068,7 @@ items:
         methods:
           - type: builtin
             action: windows_default_apps
+            interaction: helper_window
 
   - id: windows-taskbar-cleanup
     name: Taskbar Layout Cleanup
@@ -1326,6 +1329,7 @@ items:
         methods:
           - type: builtin
             action: open_undetek_plus
+            interaction: helper_window
 
   - id: mas-activation
     name: Microsoft Activation & Tweaks (MAS)
@@ -1339,3 +1343,4 @@ items:
         methods:
           - type: builtin
             action: mas_activation
+            interaction: helper_window
