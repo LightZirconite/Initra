@@ -1,1 +1,1 @@
-﻿initra-windows-amd64.exe  7a921a8da99533685aed810679c35f5359cab4ba919aa71f0af0e89bd54ab609 initra-linux-amd64      a87ad4306197e3657a0c07d2666eb4c307ab3f10ecbeafefc073b2628da7d7de
+﻿initra-windows-amd64.exe  bbeac766677ffd178dd45fe74fd8cc9cbf89917e56f1cc04a7202a13c690e803 initra-linux-amd64      fa24779ba91d0b358c830de43821ec5dd1a07c00f6780cc8abb2818b5ce5d462
