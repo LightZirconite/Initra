@@ -1,6 +1,8 @@
 # Initra
 
-![Initra logo](assets/logo.png)
+<p align="center">
+  <img src="assets/logo.png" alt="Initra logo" width="128" />
+</p>
 
 Cross-platform workstation bootstrapper for Windows and Linux.
 

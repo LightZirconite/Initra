@@ -34,8 +34,6 @@ go test ./...
 if errorlevel 1 goto :fail
 
 if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
-if exist "%RELEASE_DIR%\setupctl-windows-amd64.exe" del /q "%RELEASE_DIR%\setupctl-windows-amd64.exe"
-if exist "%RELEASE_DIR%\setupctl-linux-amd64" del /q "%RELEASE_DIR%\setupctl-linux-amd64"
 if exist "%RELEASE_DIR%\app" rmdir /s /q "%RELEASE_DIR%\app"
 if exist "%RELEASE_DIR%\catalog" rmdir /s /q "%RELEASE_DIR%\catalog"
 if exist "%RELEASE_DIR%\assets" rmdir /s /q "%RELEASE_DIR%\assets"
