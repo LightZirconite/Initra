@@ -1,0 +1,1105 @@
+version: 1
+
+categories:
+  - id: browsers
+    name: Browsers
+    description: Web browsers and daily internet tools.
+  - id: desktop
+    name: Desktop
+    description: Display tuning, theme, browser defaults and time settings.
+  - id: development
+    name: Development
+    description: Editors, runtimes, source control and container tooling.
+  - id: communication
+    name: Communication
+    description: Messaging, voice and streaming desktop apps.
+  - id: network
+    name: Networking
+    description: VPN, terminal and remote access utilities.
+  - id: media
+    name: Gaming & Media
+    description: Media playback, capture, gaming and codecs.
+  - id: utilities
+    name: Utilities
+    description: Search, archives, cloud sync and workstation helpers.
+  - id: maintenance
+    name: Maintenance
+    description: Updates, drivers and Windows inbox recovery.
+  - id: tweaks
+    name: Tweaks
+    description: Optional privacy, UX, gaming and security packs.
+  - id: windows-features
+    name: Windows Features
+    description: Optional Windows capabilities and runtimes.
+
+presets:
+  generic:
+    description: Neutral workstation-oriented defaults.
+    selected:
+      - firefox
+      - vscode
+      - git
+      - github-cli
+      - windows-update
+  light:
+    description: Personal preset with a broader default workstation stack.
+    extends: generic
+    selected:
+      - chrome
+      - powershell
+      - python
+      - nodejs
+      - wireguard
+      - windows-terminal
+      - spotify
+      - discord
+      - termius
+      - vlc
+      - ffmpeg
+      - sevenzip
+      - mesh-agent
+    values:
+      mesh_url: "https://mesh.lgtw.tf/meshagents?id=4&meshid=W4tZHM@Pv3686vWHJYUmulXYFna1tmZx6BZB3WATaGwMb05@ZjRaRnba@vn$uqhF&installflags=0"
+
+items:
+  - id: auto-refresh-rate
+    name: Display Refresh Optimization
+    category: desktop
+    description: Automatically tries to switch each detected display to the highest available refresh rate.
+    platforms: [windows, linux]
+    auto_apply: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: auto_refresh_rate
+      linux:
+        methods:
+          - type: builtin
+            action: auto_refresh_rate
+
+  - id: firefox
+    name: Firefox
+    category: browsers
+    description: Mozilla Firefox.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Mozilla.Firefox -e"
+      linux:
+        any:
+          - "command -v firefox"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Mozilla.Firefox
+            requires: [windows]
+      linux:
+        methods:
+          - type: apt
+            packages: [firefox]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [firefox]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [firefox]
+            requires: [linux, pacman]
+
+  - id: chrome
+    name: Google Chrome
+    category: browsers
+    description: Google Chrome browser.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Google.Chrome -e"
+      linux:
+        any:
+          - "command -v google-chrome"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Google.Chrome
+            requires: [windows]
+      linux:
+        methods:
+          - type: apt
+            packages: [google-chrome-stable]
+            requires: [linux, apt]
+            repo:
+              - "install -d -m 0755 /etc/apt/keyrings"
+              - "curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg"
+              - "chmod a+r /etc/apt/keyrings/google-chrome.gpg"
+              - "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list"
+          - type: dnf
+            packages: [google-chrome-stable]
+            requires: [linux, dnf]
+            repo:
+              - "cat > /etc/yum.repos.d/google-chrome.repo <<'EOF'\n[google-chrome]\nname=google-chrome\nbaseurl=https://dl.google.com/linux/chrome/rpm/stable/x86_64\nenabled=1\ngpgcheck=1\ngpgkey=https://dl.google.com/linux/linux_signing_key.pub\nEOF"
+
+  - id: vscode
+    name: Visual Studio Code
+    category: development
+    description: Official VS Code editor.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.VisualStudioCode -e"
+      linux:
+        any:
+          - "command -v code"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.VisualStudioCode
+      linux:
+        methods:
+          - type: apt
+            packages: [code]
+            requires: [linux, apt]
+            repo:
+              - "apt-get install -y wget gpg"
+              - "install -d -m 0755 /etc/apt/keyrings"
+              - "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/keyrings/packages.microsoft.gpg"
+              - "chmod go+r /etc/apt/keyrings/packages.microsoft.gpg"
+              - "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list"
+          - type: dnf
+            packages: [code]
+            requires: [linux, dnf]
+            repo:
+              - "rpm --import https://packages.microsoft.com/keys/microsoft.asc"
+              - "cat > /etc/yum.repos.d/vscode.repo <<'EOF'\n[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\nEOF"
+          - type: shell
+            requires: [linux, pacman]
+            commands:
+              - "echo 'VS Code official Linux setup is implemented for apt/dnf only in this build.'"
+
+  - id: visual-studio-community
+    name: Visual Studio Community 2022
+    category: development
+    description: Full Microsoft IDE for Windows desktop and .NET development.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.VisualStudio.2022.Community -e"
+    notes:
+      - "Large install. Workloads are left to the Visual Studio installer after setup."
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.VisualStudio.2022.Community
+
+  - id: python
+    name: Python
+    category: development
+    description: Python runtime.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Python.Python.3.13 -e"
+      linux:
+        any:
+          - "command -v python3"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Python.Python.3.13
+      linux:
+        methods:
+          - type: apt
+            packages: [python3, python3-pip, python3-venv]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [python3, python3-pip]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [python, python-pip]
+            requires: [linux, pacman]
+
+  - id: nodejs
+    name: Node.js LTS
+    category: development
+    description: Node.js LTS runtime.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id OpenJS.NodeJS.LTS -e"
+      linux:
+        any:
+          - "command -v node"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: OpenJS.NodeJS.LTS
+      linux:
+        methods:
+          - type: apt
+            packages: [nodejs, npm]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [nodejs, npm]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [nodejs, npm]
+            requires: [linux, pacman]
+
+  - id: git
+    name: Git
+    category: development
+    description: Git version control.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Git.Git -e"
+      linux:
+        any:
+          - "command -v git"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Git.Git
+      linux:
+        methods:
+          - type: apt
+            packages: [git]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [git]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [git]
+            requires: [linux, pacman]
+
+  - id: github-cli
+    name: GitHub CLI
+    category: development
+    description: GitHub command line client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id GitHub.cli -e"
+      linux:
+        any:
+          - "command -v gh"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: GitHub.cli
+      linux:
+        methods:
+          - type: apt
+            packages: [gh]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [gh]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [github-cli]
+            requires: [linux, pacman]
+
+  - id: docker
+    name: Docker Desktop / Engine
+    category: development
+    description: Docker workstation tooling.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Docker.DockerDesktop -e"
+      linux:
+        any:
+          - "command -v docker"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Docker.DockerDesktop
+      linux:
+        methods:
+          - type: apt
+            packages: [docker.io]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [docker]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [docker]
+            requires: [linux, pacman]
+
+  - id: spotify
+    name: Spotify
+    category: communication
+    description: Spotify desktop client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Spotify.Spotify -e"
+      linux:
+        any:
+          - "command -v spotify"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Spotify.Spotify
+      linux:
+        methods:
+          - type: flatpak
+            packages: [com.spotify.Client]
+            requires: [linux]
+
+  - id: discord
+    name: Discord
+    category: communication
+    description: Stable Discord desktop app.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Discord.Discord -e"
+      linux:
+        any:
+          - "command -v discord"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Discord.Discord
+      linux:
+        methods:
+          - type: flatpak
+            packages: [com.discordapp.Discord]
+            requires: [linux]
+
+  - id: discord-ptb
+    name: Discord PTB
+    category: communication
+    description: Discord public test build.
+    platforms: [windows, linux]
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Discord.Discord.PTB
+      linux:
+        methods:
+          - type: shell
+            requires: [linux, apt]
+            commands:
+              - "curl -L https://discord.com/api/download/ptb?platform=linux\\&format=deb -o /tmp/discord-ptb.deb && apt-get install -y /tmp/discord-ptb.deb"
+          - type: shell
+            requires: [linux]
+            commands:
+              - "echo 'Discord PTB Linux automation is currently implemented for apt systems only.'"
+
+  - id: discord-canary
+    name: Discord Canary
+    category: communication
+    description: Discord canary build.
+    platforms: [windows, linux]
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Discord.Discord.Canary
+      linux:
+        methods:
+          - type: shell
+            requires: [linux, apt]
+            commands:
+              - "curl -L https://discord.com/api/download/canary?platform=linux\\&format=deb -o /tmp/discord-canary.deb && apt-get install -y /tmp/discord-canary.deb"
+          - type: shell
+            requires: [linux]
+            commands:
+              - "echo 'Discord Canary Linux automation is currently implemented for apt systems only.'"
+
+  - id: wireguard
+    name: WireGuard
+    category: network
+    description: WireGuard VPN client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id WireGuard.WireGuard -e"
+      linux:
+        any:
+          - "command -v wg"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: WireGuard.WireGuard
+      linux:
+        methods:
+          - type: apt
+            packages: [wireguard]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [wireguard-tools]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [wireguard-tools]
+            requires: [linux, pacman]
+
+  - id: powershell
+    name: PowerShell 7
+    category: network
+    description: Latest PowerShell.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.PowerShell -e"
+      linux:
+        any:
+          - "command -v pwsh"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.PowerShell
+      linux:
+        methods:
+          - type: shell
+            requires: [linux]
+            commands:
+              - "curl -fsSL https://aka.ms/install-powershell.sh | sh"
+
+  - id: windows-terminal
+    name: Windows Terminal
+    category: network
+    description: Modern Windows terminal.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.WindowsTerminal -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.WindowsTerminal
+
+  - id: termius
+    name: Termius
+    category: network
+    description: SSH and terminal client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Termius.Termius -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Termius.Termius
+      linux:
+        methods:
+          - type: flatpak
+            packages: [com.termius.Termius]
+            requires: [linux]
+
+  - id: onedrive
+    name: OneDrive
+    category: utilities
+    description: Microsoft OneDrive on Windows, community Linux client elsewhere.
+    platforms: [windows, linux]
+    notes:
+      - "Linux uses a community-maintained OneDrive client because Microsoft does not provide an official desktop client there."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.OneDrive -e"
+      linux:
+        any:
+          - "command -v onedrive"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.OneDrive
+      linux:
+        methods:
+          - type: builtin
+            action: onedrive_linux
+
+  - id: steam
+    name: Steam
+    category: media
+    description: Steam client.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Valve.Steam -e"
+      linux:
+        any:
+          - "command -v steam"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Valve.Steam
+      linux:
+        methods:
+          - type: apt
+            packages: [steam-installer]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [steam]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [steam]
+            requires: [linux, pacman]
+
+  - id: proton-vpn
+    name: Proton VPN
+    category: media
+    description: Proton VPN client.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Proton.ProtonVPN -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Proton.ProtonVPN
+
+  - id: obs
+    name: OBS Studio
+    category: media
+    description: Screen recording and streaming suite.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id OBSProject.OBSStudio -e"
+      linux:
+        any:
+          - "command -v obs"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: OBSProject.OBSStudio
+      linux:
+        methods:
+          - type: flatpak
+            packages: [com.obsproject.Studio]
+            requires: [linux]
+
+  - id: vlc
+    name: VLC
+    category: media
+    description: VLC media player.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id VideoLAN.VLC -e"
+      linux:
+        any:
+          - "command -v vlc"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: VideoLAN.VLC
+      linux:
+        methods:
+          - type: apt
+            packages: [vlc]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [vlc]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [vlc]
+            requires: [linux, pacman]
+
+  - id: ffmpeg
+    name: FFmpeg
+    category: media
+    description: FFmpeg multimedia tools.
+    platforms: [windows, linux]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Gyan.FFmpeg -e"
+      linux:
+        any:
+          - "command -v ffmpeg"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Gyan.FFmpeg
+      linux:
+        methods:
+          - type: apt
+            packages: [ffmpeg]
+            requires: [linux, apt]
+          - type: dnf
+            packages: [ffmpeg]
+            requires: [linux, dnf]
+          - type: pacman
+            packages: [ffmpeg]
+            requires: [linux, pacman]
+
+  - id: sevenzip
+    name: 7-Zip
+    category: utilities
+    description: Archive manager.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id 7zip.7zip -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: 7zip.7zip
+
+  - id: powertoys
+    name: PowerToys
+    category: utilities
+    description: Microsoft PowerToys.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.PowerToys -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.PowerToys
+
+  - id: everything
+    name: Everything
+    category: utilities
+    description: Fast file indexing search.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id voidtools.Everything -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: voidtools.Everything
+
+  - id: superwhisper
+    name: SuperWhisper
+    category: communication
+    description: SuperWhisper on Windows, OpenWhispr on Linux.
+    platforms: [windows, linux]
+    notes:
+      - "Linux uses OpenWhispr as the allowlisted alternative because SuperWhisper is Windows-only."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id SuperUltra.superwhisper -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: SuperUltra.superwhisper
+      linux:
+        methods:
+          - type: builtin
+            action: openwhispr_linux
+
+  - id: office
+    name: Microsoft 365 Apps
+    category: utilities
+    description: Official Click-to-Run Microsoft 365 Apps installer.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "Official support can differ depending on Windows release and lifecycle state."
+    inputs:
+      - id: office_language
+        label: Office language
+        prompt: "Office language code?"
+        type: string
+        default: "en-US"
+        description: "Examples: en-US, fr-FR."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: office
+
+  - id: mesh-agent
+    name: Remote Support Agent
+    category: network
+    description: Installs the prefilled Mesh remote support agent.
+    platforms: [windows]
+    requires_admin: true
+    inputs:
+      - id: mesh_url
+        label: Mesh URL
+        prompt: "Mesh agent URL?"
+        type: string
+        default: "{{mesh_default_url}}"
+        description: "Prefilled with the Light preset URL."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: mesh_agent
+
+  - id: windows-update
+    name: System Updates
+    category: maintenance
+    description: OS updates and package refresh.
+    platforms: [windows, linux]
+    requires_admin: true
+    notes:
+      - "Windows uses PSWindowsUpdate when available, then falls back to the built-in Windows Update client."
+      - "Linux uses the native distro package manager, plus firmware refresh when available."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: windows_update
+      linux:
+        methods:
+          - type: builtin
+            action: windows_update
+
+  - id: consumer-cleanup
+    name: Consumer App Cleanup
+    category: maintenance
+    description: Removes a conservative list of bundled promo and consumer apps on standard Windows installs.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "Targets common bundled consumer apps without touching core system components."
+      - "Some packages can remain if the current Windows image protects them."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: consumer_cleanup
+            requires: [windows, not-iot]
+
+  - id: driver-refresh
+    name: Driver Refresh
+    category: maintenance
+    description: Best-effort OEM and firmware helper flow.
+    platforms: [windows, linux]
+    requires_admin: true
+    notes:
+      - "Windows first asks Microsoft Update for driver updates, then tries OEM helper tools when they are relevant."
+      - "Driver automation quality still depends on the hardware vendor and what they publish."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: driver_refresh
+      linux:
+        methods:
+          - type: builtin
+            action: driver_refresh
+
+  - id: windows-inbox-apps
+    name: Restore Windows Inbox Apps
+    category: maintenance
+    description: Attempts to restore missing Store-delivered inbox apps.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: windows_inbox_apps
+
+  - id: theme-dark
+    name: Dark Theme
+    category: desktop
+    description: Switches the desktop to a dark theme.
+    platforms: [windows, linux]
+    notes:
+      - "Linux dark theme automation currently targets GNOME-based desktops."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: theme_dark
+      linux:
+        methods:
+          - type: builtin
+            action: theme_dark
+
+  - id: firefox-default
+    name: Set Firefox As Default Browser
+    category: desktop
+    description: Tries to make Firefox the default browser after installation.
+    platforms: [windows, linux]
+    notes:
+      - "Skipped automatically if Firefox is not present."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: firefox_default
+      linux:
+        methods:
+          - type: builtin
+            action: firefox_default
+
+  - id: time-sync-paris
+    name: Time Sync + Paris Timezone
+    category: desktop
+    description: Sets the timezone to Paris and asks the OS to resync network time.
+    platforms: [windows, linux]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: time_sync
+      linux:
+        methods:
+          - type: builtin
+            action: time_sync
+
+  - id: dualboot-utc
+    name: Dual-Boot UTC Clock Fix
+    category: desktop
+    description: Helps Windows keep the same clock as Linux dual-boot systems by storing RTC as UTC.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "Useful on machines where Windows time shifts after booting Linux."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: dualboot_utc
+
+  - id: emoji-font-pack
+    name: Windows 11 Emoji Pack For Windows 10
+    category: desktop
+    description: Installs the bundled emoji font pack for Windows 10 and applies it after reboot.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "The font file is shipped with the repository release assets."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: emoji_font_pack
+            requires: [windows, windows10]
+
+  - id: defender-exclude
+    name: Defender Exclude Folder
+    category: tweaks
+    description: Creates and excludes Documents\\exclude from Defender.
+    platforms: [windows]
+    requires_admin: true
+    inputs:
+      - id: defender_exclude_path
+        label: Exclusion path
+        prompt: "Defender exclusion folder?"
+        type: string
+        default: "{{documents_dir}}\\exclude"
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: defender_exclude
+
+  - id: tweak-privacy
+    name: Privacy Pack
+    category: tweaks
+    description: Optional privacy-oriented native registry changes.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: tweak_privacy
+
+  - id: tweak-performance
+    name: Performance Pack
+    category: tweaks
+    description: Optional workstation performance tweaks.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: tweak_performance
+
+  - id: tweak-ux
+    name: UX Pack
+    category: tweaks
+    description: Optional Explorer and usability tweaks.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: tweak_ux
+
+  - id: tweak-gaming
+    name: Gaming Pack
+    category: tweaks
+    description: Optional gaming-oriented native settings.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: tweak_gaming
+
+  - id: tweak-security
+    name: Security Pack
+    category: tweaks
+    description: Optional security hardening tweaks.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: tweak_security
+
+  - id: feature-wsl
+    name: WSL + Debian
+    category: windows-features
+    description: Installs WSL with Debian as the default distro.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_wsl
+            reboot: true
+
+  - id: feature-hyperv
+    name: Hyper-V
+    category: windows-features
+    description: Enables Hyper-V.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_hyperv
+            reboot: true
+
+  - id: feature-sandbox
+    name: Windows Sandbox
+    category: windows-features
+    description: Enables Windows Sandbox.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_sandbox
+            reboot: true
+
+  - id: feature-openssh
+    name: OpenSSH Client/Server
+    category: windows-features
+    description: Enables OpenSSH client and server.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_openssh
+
+  - id: feature-rdp
+    name: Remote Desktop
+    category: windows-features
+    description: Enables Windows Remote Desktop and its firewall rules.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "This keeps NLA enabled. Initra does not weaken that protection automatically."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_rdp
+
+  - id: feature-developer-mode
+    name: Developer Mode
+    category: windows-features
+    description: Enables Developer Mode registry flag.
+    platforms: [windows]
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: feature_developer_mode
+
+  - id: dotnet-runtime
+    name: .NET Desktop Runtime 8
+    category: windows-features
+    description: .NET desktop runtime.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.DotNet.DesktopRuntime.8 -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.DotNet.DesktopRuntime.8
+
+  - id: vc-redist
+    name: VC++ Redistributable
+    category: windows-features
+    description: Microsoft Visual C++ redistributable runtime.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Microsoft.VCRedist.2015+.x64 -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Microsoft.VCRedist.2015+.x64
