@@ -116,9 +116,34 @@ func summarizeSessionReport(report SessionReport) sessionCounters {
 	return counters
 }
 
+func printKioskInstallScreen(env Environment, resumed bool) {
+	fmt.Print("\x1b[2J\x1b[H")
+	title := "Initra setup is running"
+	if resumed {
+		title = "Initra setup has resumed"
+	}
+	fmt.Println(termUI.blue(termUI.bold(strings.Repeat("=", len(title)+8))))
+	fmt.Println(termUI.blue(termUI.bold("=== " + title + " ===")))
+	fmt.Println(termUI.blue(termUI.bold(strings.Repeat("=", len(title)+8))))
+	fmt.Println()
+	fmt.Println(termUI.yellow(termUI.bold("Configuration is in progress. Do not turn off or restart this computer.")))
+	fmt.Println("The workstation can become temporarily unresponsive while system updates, drivers, and applications are installed.")
+	fmt.Println("This screen will stay locked until setup finishes or a managed reboot is required.")
+	fmt.Println()
+	fmt.Printf("%s %s/%s\n", termUI.dim("Target:"), env.OS, env.Arch)
+	if env.OS == "windows" && env.Windows.ProductName != "" {
+		fmt.Printf("%s %s\n", termUI.dim("Windows:"), env.Windows.ProductName)
+	} else if env.DistroName != "" {
+		fmt.Printf("%s %s\n", termUI.dim("Distro:"), env.DistroName)
+	}
+	fmt.Println()
+}
+
 func printFinalSessionScreen(report SessionReport, interactive bool) {
 	if interactive {
-		fmt.Print(strings.Repeat("\n", 8))
+		setHostedSessionFinalInputMode(true)
+		defer setHostedSessionFinalInputMode(false)
+		fmt.Print("\x1b[2J\x1b[H")
 	}
 	counters := summarizeSessionReport(report)
 	title := "Initra session finished"

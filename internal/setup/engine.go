@@ -732,10 +732,8 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
-	if env.OS == "windows" {
-		if err := setupResumeHook(paths, logger); err != nil {
-			return err
-		}
+	if err := setupResumeHook(paths, logger); err != nil {
+		return err
 	}
 	if err := saveSessionReport(reportPath, &report); err != nil {
 		return err
@@ -748,11 +746,10 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		return err
 	}
 	stopHostedSession := func() {}
-	if env.OS == "windows" {
+	if interactive {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println(termUI.yellow("Setup session is now active. The window is locked in strict focus mode."))
-		fmt.Println(termUI.dim("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows."))
+		printKioskInstallScreen(env, false)
 	}
 	defer stopHostedSession()
 
@@ -891,10 +888,8 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
 		return err
 	}
-	if env.OS == "windows" {
-		if err := setupResumeHook(paths, logger); err != nil {
-			return err
-		}
+	if err := setupResumeHook(paths, logger); err != nil {
+		return err
 	}
 	report := SessionReport{}
 	if state.ReportPath != "" {
@@ -904,11 +899,10 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		report, state.ReportPath = newSessionReport(state.Plan, paths, logger, state.StartedAt)
 	}
 	stopHostedSession := func() {}
-	if env.OS == "windows" {
+	if interactive {
 		_ = prepareHostedWindowsSession(ctx, logger)
 		stopHostedSession = startHostedSessionController(logger)
-		fmt.Println(termUI.yellow("Resumed setup session is active again. The window is locked in strict focus mode."))
-		fmt.Println(termUI.dim("Hold Escape for 5 seconds if you want to relax focus mode and interact with the rest of Windows."))
+		printKioskInstallScreen(env, true)
 	}
 	defer stopHostedSession()
 	currentPhase := ""
@@ -917,6 +911,14 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		if !stepShouldRun(step) {
 			recordStaticStepResult(&report, step)
 			state.NextStep = idx + 1
+			state.Completed = append(state.Completed, step.Item.ID)
+			state.UpdatedAt = time.Now()
+			if err := saveJSON(paths.StatePath, state); err != nil {
+				return err
+			}
+			if err := saveSessionReport(state.ReportPath, &report); err != nil {
+				return err
+			}
 			continue
 		}
 		if step.Phase != currentPhase {
@@ -2077,9 +2079,9 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 	}
 	if runtime.GOOS == "windows" {
 		taskName := appName + " Resume"
-		command := fmt.Sprintf(`schtasks /create /f /sc ONLOGON /rl HIGHEST /tn "%s" /tr "\"%s\" --resume"`, taskName, binary)
+		taskRun := fmt.Sprintf(`"%s" --resume --state-path "%s"`, binary, paths.StatePath)
 		logger.Println("installing windows resume task", taskName)
-		return exec.Command("cmd", "/c", command).Run()
+		return exec.Command("schtasks", "/create", "/f", "/sc", "ONLOGON", "/rl", "HIGHEST", "/tn", taskName, "/tr", taskRun).Run()
 	}
 	if paths.ResumeAutostart == "" {
 		return nil
@@ -2087,14 +2089,14 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 	if err := os.MkdirAll(filepath.Dir(paths.ResumeAutostart), 0o755); err != nil {
 		return err
 	}
-	content := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=%s Resume\nExec=%s --resume\nX-GNOME-Autostart-enabled=true\n", appName, binary)
+	content := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=%s Resume\nExec=%q --resume --state-path %q\nX-GNOME-Autostart-enabled=true\n", appName, binary, paths.StatePath)
 	return os.WriteFile(paths.ResumeAutostart, []byte(content), 0o644)
 }
 
 func removeResumeHook(paths Paths) error {
 	if runtime.GOOS == "windows" {
 		taskName := appName + " Resume"
-		return exec.Command("cmd", "/c", fmt.Sprintf(`schtasks /delete /f /tn "%s"`, taskName)).Run()
+		return exec.Command("schtasks", "/delete", "/f", "/tn", taskName).Run()
 	}
 	if paths.ResumeAutostart == "" {
 		return nil

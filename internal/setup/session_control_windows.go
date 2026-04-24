@@ -36,11 +36,14 @@ var (
 	procPostThreadMessage     = user32DLL.NewProc("PostThreadMessageW")
 	procMessageBeep           = user32DLL.NewProc("MessageBeep")
 	procClipCursor            = user32DLL.NewProc("ClipCursor")
+	procMoveWindow            = user32DLL.NewProc("MoveWindow")
 	procGetConsoleWindowLocal = kernel32DLL.NewProc("GetConsoleWindow")
 	procGetCurrentThreadID    = kernel32DLL.NewProc("GetCurrentThreadId")
 	procSetConsoleCtrlHandler = kernel32DLL.NewProc("SetConsoleCtrlHandler")
+	procSetThreadExecState    = kernel32DLL.NewProc("SetThreadExecutionState")
 
 	hostedSessionTopmost atomic.Bool
+	kioskInputMode       atomic.Uint32
 	gwlStyleIndex        = ^uintptr(15)
 	keyboardGuardThread  atomic.Uint32
 	mouseGuardThread     atomic.Uint32
@@ -69,6 +72,8 @@ const (
 	vkRWin                   = 0x5C
 	vkApps                   = 0x5D
 	vkSpace                  = 0x20
+	vkReturn                 = 0x0D
+	vkDelete                 = 0x2E
 	vkF4                     = 0x73
 	monitorDefaultToNearest  = 0x00000002
 	swpNoMove                = 0x0002
@@ -108,6 +113,15 @@ const (
 	ctrlLogoffEvent          = 5
 	ctrlShutdownEvent        = 6
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
+	esContinuous             = 0x80000000
+	esSystemRequired         = 0x00000001
+	esDisplayRequired        = 0x00000002
+)
+
+const (
+	kioskInputDisabled uint32 = iota
+	kioskInputRunning
+	kioskInputFinal
 )
 
 type keyboardLLHookStruct struct {
@@ -145,8 +159,10 @@ type monitorInfo struct {
 
 func startHostedSessionController(logger *Logger) func() {
 	hostedSessionTopmost.Store(true)
+	kioskInputMode.Store(kioskInputRunning)
 	ensureConsoleCtrlHandler()
 	enablePerMonitorDPIAwareness(logger)
+	preventSystemSleep(logger)
 	_ = applyConsoleFocusMode(true)
 	stopKeyboardGuard := startKeyboardGuard(logger)
 	stopMouseGuard := startMouseGuard(logger)
@@ -154,30 +170,27 @@ func startHostedSessionController(logger *Logger) func() {
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
-		var heldFor time.Duration
+		var escapeStarted time.Time
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
 				if isEscapePressed() {
-					heldFor += 100 * time.Millisecond
-					if heldFor >= 5*time.Second {
-						toggle := !hostedSessionTopmost.Load()
-						hostedSessionTopmost.Store(toggle)
-						_ = applyConsoleFocusMode(toggle)
+					if escapeStarted.IsZero() {
+						escapeStarted = time.Now()
+					}
+					if time.Since(escapeStarted) >= 5*time.Second && hostedSessionTopmost.Load() {
+						hostedSessionTopmost.Store(false)
+						kioskInputMode.Store(kioskInputDisabled)
+						allowSystemSleep()
+						_ = applyConsoleFocusMode(false)
 						beepHostedSession()
-						if toggle {
-							fmt.Println("\nInitra focus mode is active again. Helper windows can still come to the front when needed.")
-							logger.Println("hosted-session topmost restored via escape hold")
-						} else {
-							fmt.Println("\nInitra focus mode has been relaxed. You can interact with the rest of Windows again.")
-							logger.Println("hosted-session topmost relaxed via escape hold")
-						}
-						heldFor = 0
+						fmt.Println("\nInitra kiosk mode has been disabled by technician override.")
+						logger.Println("kiosk mode disabled via escape hold")
 					}
 				} else {
-					heldFor = 0
+					escapeStarted = time.Time{}
 				}
 				if hostedSessionTopmost.Load() {
 					_ = enforceConsoleFocus()
@@ -189,6 +202,9 @@ func startHostedSessionController(logger *Logger) func() {
 		close(done)
 		stopKeyboardGuard()
 		stopMouseGuard()
+		hostedSessionTopmost.Store(false)
+		kioskInputMode.Store(kioskInputDisabled)
+		allowSystemSleep()
 		_ = applyConsoleFocusMode(false)
 	}
 }
@@ -199,6 +215,22 @@ func hostedSessionTopmostEnabled() bool {
 
 func setHostedSessionTopmostEnabled(enabled bool) {
 	hostedSessionTopmost.Store(enabled)
+	if enabled {
+		kioskInputMode.Store(kioskInputRunning)
+	} else {
+		kioskInputMode.Store(kioskInputDisabled)
+	}
+}
+
+func setHostedSessionFinalInputMode(enabled bool) {
+	if !hostedSessionTopmost.Load() {
+		return
+	}
+	if enabled {
+		kioskInputMode.Store(kioskInputFinal)
+		return
+	}
+	kioskInputMode.Store(kioskInputRunning)
 }
 
 func applyConsoleTopmost(enabled bool) error {
@@ -224,7 +256,9 @@ func applyConsoleFocusMode(enabled bool) error {
 		insertAfter = uintptr(^uintptr(0))
 		x, y, w, h := consoleMonitorBounds(hwnd)
 		clipCursorToRect(x, y, w, h)
-		_, _, err := procSetWindowPos.Call(hwnd, insertAfter, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpShowWindow|swpFrameChanged)
+		_, _, _ = procShowWindow.Call(hwnd, swRestore)
+		_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+		_, _, err := procSetWindowPos.Call(hwnd, insertAfter, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
 		if err != syscall.Errno(0) {
 			return err
 		}
@@ -265,7 +299,8 @@ func enforceConsoleFocus() error {
 		return nil
 	}
 	x, y, w, h := consoleMonitorBounds(hwnd)
-	_, _, err := procSetWindowPos.Call(hwnd, uintptr(^uintptr(0)), uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpShowWindow|swpFrameChanged)
+	_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+	_, _, err := procSetWindowPos.Call(hwnd, uintptr(^uintptr(0)), signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
 	if err != syscall.Errno(0) {
 		return err
 	}
@@ -440,7 +475,7 @@ func keyboardGuardProc(code int, wParam uintptr, lParam uintptr) uintptr {
 		next, _, _ := procCallNextHookEx.Call(0, uintptr(code), wParam, lParam)
 		return next
 	}
-	if shouldBlockKeystroke(event.VkCode, keyDown, keyUp) {
+	if shouldBlockKeystroke(event.VkCode, keyDown, keyUp, kioskInputMode.Load()) {
 		return 1
 	}
 	next, _, _ := procCallNextHookEx.Call(0, uintptr(code), wParam, lParam)
@@ -499,7 +534,13 @@ func shouldBlockMouseMessage(message uint32) bool {
 	}
 }
 
-func shouldBlockKeystroke(vk uint32, keyDown, keyUp bool) bool {
+func shouldBlockKeystroke(vk uint32, keyDown, keyUp bool, mode uint32) bool {
+	if mode == kioskInputFinal {
+		if vk == vkEscape {
+			return true
+		}
+		return vk != vkReturn
+	}
 	switch vk {
 	case vkLWin, vkRWin, vkApps:
 		return true
@@ -517,12 +558,35 @@ func shouldBlockKeystroke(vk uint32, keyDown, keyUp bool) bool {
 			return true
 		}
 		return false
+	case vkDelete:
+		return keyDown && ctrlPressed.Load() && altPressed.Load()
 	default:
 		if keyUp {
 			return false
 		}
 		return false
 	}
+}
+
+func signedIntArg(value int32) uintptr {
+	return uintptr(int(value))
+}
+
+func preventSystemSleep(logger *Logger) {
+	if procSetThreadExecState.Find() != nil {
+		return
+	}
+	state := uintptr(esContinuous | esSystemRequired | esDisplayRequired)
+	if ret, _, err := procSetThreadExecState.Call(state); ret == 0 && logger != nil {
+		logger.Println("sleep prevention failed", err)
+	}
+}
+
+func allowSystemSleep() {
+	if procSetThreadExecState.Find() != nil {
+		return
+	}
+	_, _, _ = procSetThreadExecState.Call(uintptr(esContinuous))
 }
 
 func enablePerMonitorDPIAwareness(logger *Logger) {
