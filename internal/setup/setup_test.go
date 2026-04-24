@@ -283,6 +283,18 @@ func TestParseWindowsProcessIDs(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONBytesAllowsUTF8BOM(t *testing.T) {
+	var payload struct {
+		Version string `json:"version"`
+	}
+	if err := decodeJSONBytes([]byte("\ufeff{\"version\":\"ok\"}"), &payload); err != nil {
+		t.Fatalf("decodeJSONBytes() error = %v", err)
+	}
+	if payload.Version != "ok" {
+		t.Fatalf("unexpected version: %s", payload.Version)
+	}
+}
+
 func TestWindowsOnlyAndVersionSpecificVisibility(t *testing.T) {
 	catalog, err := loadCatalog(filepath.Join("..", "..", "catalog", "catalog.yaml"))
 	if err != nil {

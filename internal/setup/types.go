@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -541,7 +542,20 @@ func loadJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, value)
+	return decodeJSONBytes(data, value)
+}
+
+func decodeJSONBody(reader io.Reader, value any) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return decodeJSONBytes(data, value)
+}
+
+func decodeJSONBytes(data []byte, value any) error {
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	return json.Unmarshal([]byte(text), value)
 }
 
 func isMissing(err error) bool {

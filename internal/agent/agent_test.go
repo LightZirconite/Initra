@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSelectAgentArtifact(t *testing.T) {
 	manifest := manifestResponse{
@@ -32,5 +35,15 @@ func TestSelectAgentArtifact(t *testing.T) {
 
 	if _, ok := SelectAgentArtifact(manifest, "darwin", "amd64"); ok {
 		t.Fatalf("did not expect darwin artifact")
+	}
+}
+
+func TestDecodeJSONBodyAllowsUTF8BOM(t *testing.T) {
+	var payload manifestResponse
+	if err := decodeJSONBody(strings.NewReader("\ufeff{\"version\":\"ok\"}"), &payload); err != nil {
+		t.Fatalf("decodeJSONBody() error = %v", err)
+	}
+	if payload.Version != "ok" {
+		t.Fatalf("unexpected version: %s", payload.Version)
 	}
 }

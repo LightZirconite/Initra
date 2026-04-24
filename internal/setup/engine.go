@@ -2122,7 +2122,7 @@ func installInitraAgent(ctx context.Context, env Environment, logger *Logger, ba
 		return fmt.Errorf("agent manifest returned %s", resp.Status)
 	}
 	var manifest manifestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	if err := decodeJSONBody(resp.Body, &manifest); err != nil {
 		return err
 	}
 
@@ -2782,7 +2782,7 @@ func runSelfUpdate(ctx context.Context, env Environment, logger *Logger, baseURL
 		return fmt.Errorf("self-update manifest returned %s", resp.Status)
 	}
 	var manifest manifestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	if err := decodeJSONBody(resp.Body, &manifest); err != nil {
 		return err
 	}
 	artifactKey := env.OS + "-" + env.Arch

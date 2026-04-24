@@ -203,10 +203,19 @@ func fetchManifest(ctx context.Context, baseURL string) (manifestResponse, error
 		return manifestResponse{}, fmt.Errorf("manifest returned %s", resp.Status)
 	}
 	var manifest manifestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	if err := decodeJSONBody(resp.Body, &manifest); err != nil {
 		return manifestResponse{}, err
 	}
 	return manifest, nil
+}
+
+func decodeJSONBody(reader io.Reader, value any) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	return json.Unmarshal([]byte(text), value)
 }
 
 func SelectAgentArtifact(manifest manifestResponse, goos, goarch string) (Artifact, bool) {

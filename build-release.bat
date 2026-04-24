@@ -204,13 +204,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "    'agent-linux-amd64'=$agentLinuxHash" ^
   "  }" ^
   "};" ^
-  "$manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 '%MANIFEST%';" ^
+  "$utf8NoBom=New-Object System.Text.UTF8Encoding($false);" ^
+  "[System.IO.File]::WriteAllText('%MANIFEST%', ($manifest | ConvertTo-Json -Depth 5), $utf8NoBom);" ^
   "$checksums=@();" ^
   "$checksums += 'initra-windows-amd64.exe        ' + $winHash;" ^
   "$checksums += 'initra-linux-amd64            ' + $linuxHash;" ^
   "$checksums += 'initra-agent-windows-amd64.exe  ' + $agentWinHash;" ^
   "$checksums += 'initra-agent-linux-amd64      ' + $agentLinuxHash;" ^
-  "$checksums | Set-Content -Encoding utf8 '%CHECKSUMS%';"
+  "[System.IO.File]::WriteAllLines('%CHECKSUMS%', [string[]]$checksums, $utf8NoBom);"
 if errorlevel 1 goto :fail
 
 echo [8/8] Done.
