@@ -1,19 +1,23 @@
 package setup
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -308,7 +312,7 @@ func extraItemWarnings(item Item, env Environment, inputs map[string]string) []s
 	case "everything-toolbar":
 		warnings = append(warnings, "EverythingToolbar installs Everything automatically because the toolbar depends on the Everything search indexer.")
 	case "simplewall":
-		warnings = append(warnings, "simplewall can interrupt app connectivity or remote support if rules are tightened aggressively.")
+		warnings = append(warnings, "simplewall is applied at the end of setup so installs and first-run network prompts can complete first.")
 	case "winutil-shortcut":
 		warnings = append(warnings, "WinUtil is not bundled. The desktop shortcut downloads the official script only when the user launches it.")
 	}
@@ -403,6 +407,9 @@ func selectionStateForItem(item Item, profile UserProfile) string {
 }
 
 func resolvePlannedAction(item Item, method Method, env Environment, logger *Logger) (string, error) {
+	if item.ID == "simplewall" && method.Type == "builtin" && method.Action == "simplewall" {
+		return stepActionInstall, nil
+	}
 	switch {
 	case method.Type == "winget" && env.OS == "windows":
 		state, err := detectWingetPackageState(item, method.Package, env, logger)
@@ -802,8 +809,24 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
-		if err := executeStep(ctx, step, env, logger, baseURL); err != nil {
+		if err := executeStep(ctx, plan, step, env, logger, baseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
+			if step.Item.ContinueOnError {
+				warning := fmt.Sprintf("%s failed but setup continued: %v", step.Item.Name, err)
+				report.Warnings = uniqueStrings(append(report.Warnings, warning))
+				state.Completed = append(state.Completed, step.Item.ID)
+				state.NextStep = idx + 1
+				state.PendingReboot = false
+				state.UpdatedAt = time.Now()
+				logger.Println("non-fatal step failure", step.Item.ID, err)
+				if saveErr := saveJSON(paths.StatePath, state); saveErr != nil {
+					return saveErr
+				}
+				if saveErr := saveSessionReport(reportPath, &report); saveErr != nil {
+					return saveErr
+				}
+				continue
+			}
 			report.Status = "error"
 			report.Error = fmt.Sprintf("%s: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
@@ -861,7 +884,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 
 	_ = os.Remove(paths.StatePath)
 	_ = removeResumeHook(paths)
-	report.Status = "success"
+	report.Status = finalCompletedStatus(report)
 	report.FinishedAt = time.Now()
 	if err := saveSessionReport(reportPath, &report); err != nil {
 		return err
@@ -929,8 +952,24 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
-		if err := executeStep(ctx, step, env, logger, state.BaseURL); err != nil {
+		if err := executeStep(ctx, state.Plan, step, env, logger, state.BaseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
+			if step.Item.ContinueOnError {
+				warning := fmt.Sprintf("%s failed during resume but setup continued: %v", step.Item.Name, err)
+				report.Warnings = uniqueStrings(append(report.Warnings, warning))
+				state.Completed = append(state.Completed, step.Item.ID)
+				state.NextStep = idx + 1
+				state.PendingReboot = false
+				state.UpdatedAt = time.Now()
+				logger.Println("non-fatal resumed step failure", step.Item.ID, err)
+				if saveErr := saveJSON(paths.StatePath, state); saveErr != nil {
+					return saveErr
+				}
+				if saveErr := saveSessionReport(state.ReportPath, &report); saveErr != nil {
+					return saveErr
+				}
+				continue
+			}
 			report.Status = "error"
 			report.Error = fmt.Sprintf("resume %s: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
@@ -986,7 +1025,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	}
 	_ = os.Remove(paths.StatePath)
 	_ = removeResumeHook(paths)
-	report.Status = "success"
+	report.Status = finalCompletedStatus(report)
 	report.FinishedAt = time.Now()
 	if err := saveSessionReport(state.ReportPath, &report); err != nil {
 		return err
@@ -995,7 +1034,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	return nil
 }
 
-func executeStep(ctx context.Context, step ResolvedStep, env Environment, logger *Logger, baseURL string) error {
+func executeStep(ctx context.Context, plan Plan, step ResolvedStep, env Environment, logger *Logger, baseURL string, interactive bool) error {
 	run := func() error {
 		switch step.Method.Type {
 		case "winget":
@@ -1013,7 +1052,7 @@ func executeStep(ctx context.Context, step ResolvedStep, env Environment, logger
 		case "shell":
 			return runShellCommands(ctx, env, logger, step.Method.Commands, step.Inputs)
 		case "builtin":
-			return runBuiltin(ctx, env, logger, step, baseURL)
+			return runBuiltin(ctx, env, logger, plan, step, baseURL, interactive)
 		default:
 			return fmt.Errorf("unsupported method type %q", step.Method.Type)
 		}
@@ -1185,6 +1224,136 @@ func runWindowsPowerShellScript(ctx context.Context, logger *Logger, script stri
 	return runProcess(ctx, Environment{OS: "windows"}, logger, "powershell", args...)
 }
 
+func configureGitAuthentication(ctx context.Context, env Environment, logger *Logger, inputs map[string]string) error {
+	git := gitExecutable(env)
+	if git == "" {
+		return errors.New("git executable was not found after installation")
+	}
+
+	host := normalizeGitCredentialHost(inputs["git_auth_host"])
+	username := strings.TrimSpace(inputs["git_auth_username"])
+	token := strings.TrimSpace(inputs["git_auth_token"])
+	if host == "" {
+		return errors.New("git authentication host is required")
+	}
+	if username == "" {
+		return errors.New("git authentication username is required")
+	}
+	if token == "" {
+		return errors.New("git authentication token is required")
+	}
+
+	helper := "store"
+	if env.OS == "windows" {
+		helper = "manager"
+	} else if libsecret := findGitLibsecretHelper(); libsecret != "" {
+		helper = libsecret
+	}
+
+	if err := runGitConfig(ctx, env, logger, git, "credential.helper", helper); err != nil {
+		return err
+	}
+	_ = runGitConfig(ctx, env, logger, git, "credential.interactive", "false")
+	if env.OS == "windows" {
+		_ = runGitConfig(ctx, env, logger, git, "credential.guiPrompt", "false")
+	}
+
+	payload := strings.Join([]string{
+		"protocol=https",
+		"host=" + host,
+		"username=" + username,
+		"password=" + token,
+		"",
+		"",
+	}, "\n")
+	if err := runGitWithInput(ctx, env, logger, git, "credential approve", payload, "credential", "approve"); err != nil {
+		return err
+	}
+
+	if env.OS == "windows" {
+		fmt.Println("Git credentials were stored through Git Credential Manager for " + host + ".")
+	} else if helper == "store" {
+		fmt.Println("Git credentials were stored in Git's persistent credential store for " + host + ".")
+	} else {
+		fmt.Println("Git credentials were stored through libsecret for " + host + ".")
+	}
+	return nil
+}
+
+func runGitConfig(ctx context.Context, env Environment, logger *Logger, git, key, value string) error {
+	return runGitWithInput(ctx, env, logger, git, "config --global "+key, "", "config", "--global", key, value)
+}
+
+func runGitWithInput(ctx context.Context, env Environment, logger *Logger, git, logAction, stdin string, args ...string) error {
+	logger.Println("run", git, logAction)
+	cmd := exec.CommandContext(ctx, git, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	cmd.Stdout = io.MultiWriter(os.Stdout, logger.file)
+	cmd.Stderr = io.MultiWriter(os.Stderr, logger.file)
+	return cmd.Run()
+}
+
+func gitExecutable(env Environment) string {
+	if path, err := exec.LookPath("git"); err == nil {
+		return path
+	}
+	if env.OS == "windows" {
+		for _, candidate := range []string{
+			filepath.Join(os.Getenv("ProgramFiles"), "Git", "cmd", "git.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "Git", "bin", "git.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Git", "cmd", "git.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Git", "bin", "git.exe"),
+		} {
+			if candidate == "" {
+				continue
+			}
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func findGitLibsecretHelper() string {
+	if path, err := exec.LookPath("git-credential-libsecret"); err == nil {
+		return path
+	}
+	for _, candidate := range []string{
+		"/usr/lib/git-core/git-credential-libsecret",
+		"/usr/share/doc/git/contrib/credential/libsecret/git-credential-libsecret",
+		"/usr/libexec/git-core/git-credential-libsecret",
+	} {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func normalizeGitCredentialHost(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		return strings.TrimSpace(parsed.Host)
+	}
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.Trim(value, "/")
+	if idx := strings.Index(value, "/"); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
+}
+
+func defaultGitCredentialHost() string {
+	return normalizeGitCredentialHost(defaultReleaseBaseURL)
+}
+
 func renderTemplate(value string, env Environment, inputs map[string]string) (string, error) {
 	ctx := map[string]any{
 		"env": map[string]string{
@@ -1214,7 +1383,7 @@ func renderTemplate(value string, env Environment, inputs map[string]string) (st
 	return builder.String(), nil
 }
 
-func runBuiltin(ctx context.Context, env Environment, logger *Logger, step ResolvedStep, baseURL string) error {
+func runBuiltin(ctx context.Context, env Environment, logger *Logger, plan Plan, step ResolvedStep, baseURL string, interactive bool) error {
 	switch step.Method.Action {
 	case "auto_refresh_rate":
 		return runAutoRefreshRate(ctx, env, logger)
@@ -1230,6 +1399,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 			URL:      "{{index .inputs \"mesh_url\"}}",
 			FileName: "mesh-agent.exe",
 		}, step.Inputs)
+	case "configure_git_auth":
+		return configureGitAuthentication(ctx, env, logger, step.Inputs)
 	case "fastfetch":
 		return installFastfetch(ctx, env, logger)
 	case "openwhispr_linux":
@@ -1256,6 +1427,10 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return installInitraAgent(ctx, env, logger, baseURL)
 	case "defender_exclude":
 		return configureDefenderExclusion(ctx, env, logger, step.Inputs["defender_exclude_path"])
+	case "simplewall":
+		return installAndConfigureSimplewall(ctx, env, logger, baseURL)
+	case "first_run_apps":
+		return runGuidedFirstRuns(ctx, env, logger, plan, interactive)
 	case "theme_dark":
 		return runDarkTheme(ctx, env, logger)
 	case "sleep_policy":
@@ -2393,12 +2568,438 @@ func installEverythingToolbar(ctx context.Context, env Environment, logger *Logg
 	return nil
 }
 
+type simplewallProfile struct {
+	XMLName     xml.Name                 `xml:"root"`
+	Version     string                   `xml:"version,attr"`
+	Type        string                   `xml:"type,attr"`
+	Timestamp   string                   `xml:"timestamp,attr,omitempty"`
+	Apps        simplewallProfileApps    `xml:"apps"`
+	RulesCustom simplewallProfileSection `xml:"rules_custom"`
+	RulesConfig simplewallProfileSection `xml:"rules_config"`
+}
+
+type simplewallProfileApps struct {
+	Items []simplewallProfileApp `xml:"item"`
+}
+
+type simplewallProfileApp struct {
+	Path          string `xml:"path,attr"`
+	Timestamp     string `xml:"timestamp,attr,omitempty"`
+	IsUndeletable string `xml:"is_undeletable,attr,omitempty"`
+	IsEnabled     string `xml:"is_enabled,attr,omitempty"`
+}
+
+type simplewallProfileSection struct{}
+
+func installAndConfigureSimplewall(ctx context.Context, env Environment, logger *Logger, baseURL string) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	if !env.IsAdmin {
+		return errors.New("simplewall configuration requires administrator rights")
+	}
+	if err := ensureWinget(ctx, env, logger); err != nil {
+		return err
+	}
+	if err := ensureWingetPackage(ctx, env, logger, "Henry++.simplewall"); err != nil {
+		return err
+	}
+
+	_ = exec.CommandContext(ctx, "taskkill", "/IM", "simplewall.exe", "/F").Run()
+
+	profileSource, cleanup, err := resolveAssetPath(ctx, env, baseURL, "app/profile.xml")
+	if err != nil {
+		return fmt.Errorf("resolve simplewall profile: %w", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	profileDir, err := simplewallProfileDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		return err
+	}
+	profileTarget := filepath.Join(profileDir, "profile.xml")
+	if err := copyFile(profileSource, profileTarget, 0o644); err != nil {
+		return err
+	}
+	if err := augmentSimplewallProfile(profileTarget, env); err != nil {
+		return err
+	}
+
+	exe := findSimplewallExecutable()
+	if exe == "" {
+		return errors.New("simplewall executable was not found after installation")
+	}
+	if err := runProcess(ctx, env, logger, exe, "-install", "-silent"); err != nil {
+		return err
+	}
+	fmt.Println("simplewall profile deployed and permanent filters enabled.")
+	return nil
+}
+
+func simplewallProfileDir() (string, error) {
+	appData := strings.TrimSpace(os.Getenv("APPDATA"))
+	if appData == "" {
+		return "", errors.New("APPDATA is not set")
+	}
+	return filepath.Join(appData, "Henry++", "simplewall"), nil
+}
+
+func findSimplewallExecutable() string {
+	candidates := []string{
+		filepath.Join(os.Getenv("ProgramFiles"), "simplewall", "simplewall.exe"),
+		filepath.Join(os.Getenv("ProgramFiles(x86)"), "simplewall", "simplewall.exe"),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	if path, err := exec.LookPath("simplewall.exe"); err == nil {
+		return path
+	}
+	return ""
+}
+
+func augmentSimplewallProfile(path string, env Environment) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var profile simplewallProfile
+	if err := xml.Unmarshal(data, &profile); err != nil {
+		return err
+	}
+	if profile.Version == "" {
+		profile.Version = "5"
+	}
+	if profile.Type == "" {
+		profile.Type = "3"
+	}
+	expandSimplewallProfileVariables(&profile)
+	for _, appPath := range detectedSimplewallAllowedApps(env) {
+		profile.addAllowedApp(appPath, true)
+	}
+	output, err := xml.MarshalIndent(profile, "", "\t")
+	if err != nil {
+		return err
+	}
+	output = append([]byte(xml.Header), output...)
+	output = append(output, '\n')
+	return os.WriteFile(path, output, 0o644)
+}
+
+func expandSimplewallProfileVariables(profile *simplewallProfile) {
+	existing := append([]simplewallProfileApp(nil), profile.Apps.Items...)
+	for _, item := range existing {
+		if !strings.EqualFold(item.IsEnabled, "true") {
+			continue
+		}
+		expanded := expandWindowsPercentEnv(item.Path)
+		if expanded == "" || strings.EqualFold(expanded, item.Path) {
+			continue
+		}
+		profile.addAllowedApp(expanded, strings.EqualFold(item.IsUndeletable, "true"))
+	}
+}
+
+func expandWindowsPercentEnv(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, "%") {
+		return value
+	}
+	var builder strings.Builder
+	for idx := 0; idx < len(value); {
+		if value[idx] != '%' {
+			builder.WriteByte(value[idx])
+			idx++
+			continue
+		}
+		end := strings.IndexByte(value[idx+1:], '%')
+		if end < 0 {
+			builder.WriteByte(value[idx])
+			idx++
+			continue
+		}
+		end += idx + 1
+		name := value[idx+1 : end]
+		if name == "" {
+			builder.WriteString("%%")
+			idx = end + 1
+			continue
+		}
+		if replacement, ok := lookupEnvInsensitive(name); ok {
+			builder.WriteString(replacement)
+		} else {
+			builder.WriteString(value[idx : end+1])
+		}
+		idx = end + 1
+	}
+	return builder.String()
+}
+
+func lookupEnvInsensitive(name string) (string, bool) {
+	if value, ok := os.LookupEnv(name); ok {
+		return value, true
+	}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func (p *simplewallProfile) addAllowedApp(path string, undeletable bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	for idx := range p.Apps.Items {
+		if strings.EqualFold(p.Apps.Items[idx].Path, path) {
+			p.Apps.Items[idx].IsEnabled = "true"
+			if undeletable {
+				p.Apps.Items[idx].IsUndeletable = "true"
+			}
+			return
+		}
+	}
+	item := simplewallProfileApp{Path: path, IsEnabled: "true"}
+	if undeletable {
+		item.IsUndeletable = "true"
+	}
+	p.Apps.Items = append(p.Apps.Items, item)
+}
+
+func detectedSimplewallAllowedApps(env Environment) []string {
+	paths := []string{
+		findSimplewallExecutable(),
+		windowsKnownFolderPath("ProgramFiles", "Initra Agent", "initra-agent.exe"),
+		currentBinaryPath(),
+		gitExecutable(env),
+		firstExisting(
+			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "libexec", "git-core", "git-remote-https.exe"),
+			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "libexec", "git-core", "git-remote-https.exe"),
+		),
+		firstExisting(
+			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "libexec", "git-core", "git-credential-manager.exe"),
+			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "bin", "git-credential-manager.exe"),
+			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "libexec", "git-core", "git-credential-manager.exe"),
+			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "bin", "git-credential-manager.exe"),
+		),
+		firstExisting(
+			windowsSystemPath("System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+			windowsSystemPath("SysWOW64", "WindowsPowerShell", "v1.0", "powershell.exe"),
+		),
+		findFirefoxBinaryWindows(),
+		firstExisting(
+			windowsKnownFolderPath("ProgramFiles", "Microsoft Corporation", "WindowsMonitoringService", "WindowsMonitoringService.exe"),
+			windowsKnownFolderPath("ProgramFiles(x86)", "Microsoft Corporation", "WindowsMonitoringService", "WindowsMonitoringService.exe"),
+		),
+		firstExisting(
+			windowsKnownFolderPath("ProgramFiles", "Windows Defender", "MsMpEng.exe"),
+			windowsKnownFolderPath("ProgramFiles(x86)", "Windows Defender", "MsMpEng.exe"),
+		),
+	}
+	if wingetPath, err := exec.LookPath("winget"); err == nil {
+		paths = append(paths, wingetPath)
+	}
+	if powershellPath, err := exec.LookPath("powershell"); err == nil {
+		paths = append(paths, powershellPath)
+	}
+	if pwshPath, err := exec.LookPath("pwsh"); err == nil {
+		paths = append(paths, pwshPath)
+	}
+	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramData", "Microsoft", "Windows Defender", "Platform", "*", "MsMpEng.exe")))
+	paths = append(paths, latestGlob(windowsKnownFolderPath("LOCALAPPDATA", "Discord", "app-*", "Discord.exe")))
+	paths = append(paths, latestGlob(windowsKnownFolderPath("LOCALAPPDATA", "Discord", "app-*", "Squirrel.exe")))
+	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramFiles", "WindowsApps", "Microsoft.DesktopAppInstaller_*", "winget.exe")))
+	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramFiles", "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerServer.exe")))
+
+	seen := map[string]bool{}
+	allowed := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[strings.ToLower(path)] {
+			continue
+		}
+		seen[strings.ToLower(path)] = true
+		allowed = append(allowed, path)
+	}
+	return allowed
+}
+
+func windowsKnownFolderPath(envName string, parts ...string) string {
+	root, ok := lookupEnvInsensitive(envName)
+	if !ok || strings.TrimSpace(root) == "" {
+		return ""
+	}
+	allParts := append([]string{root}, parts...)
+	return filepath.Join(allParts...)
+}
+
+func windowsSystemPath(parts ...string) string {
+	root, ok := lookupEnvInsensitive("SystemRoot")
+	if !ok || strings.TrimSpace(root) == "" {
+		root, ok = lookupEnvInsensitive("WINDIR")
+	}
+	if !ok || strings.TrimSpace(root) == "" {
+		return ""
+	}
+	allParts := append([]string{root}, parts...)
+	return filepath.Join(allParts...)
+}
+
+func latestGlob(pattern string) string {
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	sort.Strings(matches)
+	return matches[len(matches)-1]
+}
+
+type firstRunCandidate struct {
+	ID    string
+	Name  string
+	Paths []string
+}
+
+func runGuidedFirstRuns(ctx context.Context, env Environment, logger *Logger, plan Plan, interactive bool) error {
+	if env.OS != "windows" {
+		return nil
+	}
+	candidates := resolvedFirstRunCandidates(plan, env)
+	if len(candidates) == 0 {
+		fmt.Println("No installed desktop applications need a guided first run.")
+		return nil
+	}
+	if !interactive {
+		fmt.Println("Skipping guided application first runs in non-interactive mode.")
+		for _, candidate := range candidates {
+			fmt.Printf("  - %s: %s\n", candidate.Name, candidate.Paths[0])
+		}
+		return nil
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Some applications benefit from being opened once to finish their setup.")
+	for _, candidate := range candidates {
+		ok, err := promptYesNo(reader, fmt.Sprintf("Open %s now?", candidate.Name), true)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := startWindowsApplication(ctx, logger, candidate.Paths[0]); err != nil {
+			fmt.Printf("Could not open %s: %v\n", candidate.Name, err)
+			logger.Println("first-run launch failed", candidate.ID, err)
+			continue
+		}
+		fmt.Printf("Opened %s. Press Enter here when you are ready for the next application.", candidate.Name)
+		_, _ = reader.ReadString('\n')
+	}
+	return nil
+}
+
+func resolvedFirstRunCandidates(plan Plan, env Environment) []firstRunCandidate {
+	selected := map[string]bool{}
+	for _, step := range plan.Steps {
+		if step.SkipReason != "" {
+			continue
+		}
+		if step.Item.AutoApply && !firstRunAutoApplyAllowed(step.Item.ID) {
+			continue
+		}
+		if stepShouldRun(step) || step.AlreadyPresent || plan.Profile.Selected[step.Item.ID] {
+			selected[step.Item.ID] = true
+		}
+	}
+
+	definitions := []firstRunCandidate{
+		{ID: "firefox", Name: "Firefox", Paths: []string{findFirefoxBinaryWindows()}},
+		{ID: "chrome", Name: "Google Chrome", Paths: []string{
+			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+		}},
+		{ID: "vscode", Name: "Visual Studio Code", Paths: []string{
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Microsoft VS Code", "Code.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft VS Code", "Code.exe"),
+		}},
+		{ID: "discord", Name: "Discord", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "Discord", "app-*", "Discord.exe"))}},
+		{ID: "discord-ptb", Name: "Discord PTB", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "DiscordPTB", "app-*", "DiscordPTB.exe"))}},
+		{ID: "discord-canary", Name: "Discord Canary", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "DiscordCanary", "app-*", "DiscordCanary.exe"))}},
+		{ID: "spotify", Name: "Spotify", Paths: []string{filepath.Join(os.Getenv("APPDATA"), "Spotify", "Spotify.exe")}},
+		{ID: "localsend", Name: "LocalSend", Paths: []string{
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "LocalSend", "localsend_app.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "LocalSend", "localsend_app.exe"),
+		}},
+		{ID: "termius", Name: "Termius", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Termius", "Termius.exe"))}},
+		{ID: "vlc", Name: "VLC", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "VideoLAN", "VLC", "vlc.exe")}},
+		{ID: "obs", Name: "OBS Studio", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "obs-studio", "bin", "64bit", "obs64.exe")}},
+		{ID: "steam", Name: "Steam", Paths: []string{filepath.Join(os.Getenv("ProgramFiles(x86)"), "Steam", "steam.exe")}},
+		{ID: "onedrive", Name: "OneDrive", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "Microsoft OneDrive", "OneDrive.exe")}},
+		{ID: "quicklook", Name: "QuickLook", Paths: []string{filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "QuickLook", "QuickLook.exe")}},
+		{ID: "powertoys", Name: "PowerToys", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "PowerToys", "PowerToys.exe")}},
+		{ID: "unigetui", Name: "UniGetUI", Paths: []string{filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "UniGetUI", "UniGetUI.exe")}},
+		{ID: "everything-toolbar", Name: "EverythingToolbar", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "EverythingToolbar", "EverythingToolbar.Launcher.exe")}},
+		{ID: "stoat", Name: "Stoat", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "Stoat", "app-*", "Stoat Desktop.exe"))}},
+	}
+
+	results := []firstRunCandidate{}
+	seen := map[string]bool{}
+	for _, definition := range definitions {
+		if !selected[definition.ID] {
+			continue
+		}
+		path := firstExisting(definition.Paths...)
+		if path == "" {
+			for _, candidate := range definition.Paths {
+				if strings.TrimSpace(candidate) != "" {
+					path = strings.TrimSpace(candidate)
+					break
+				}
+			}
+		}
+		if path == "" || seen[strings.ToLower(path)] {
+			continue
+		}
+		seen[strings.ToLower(path)] = true
+		results = append(results, firstRunCandidate{ID: definition.ID, Name: definition.Name, Paths: []string{path}})
+	}
+	return results
+}
+
+func firstRunAutoApplyAllowed(id string) bool {
+	switch id {
+	case "everything-toolbar":
+		return true
+	default:
+		return false
+	}
+}
+
+func startWindowsApplication(ctx context.Context, logger *Logger, path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	script := fmt.Sprintf(`Start-Process -FilePath %s`, psSingleQuoted(path))
+	return runWindowsPowerShellScript(ctx, logger, script)
+}
+
 func createWinUtilDesktopShortcut(ctx context.Context, env Environment, logger *Logger) error {
 	if env.OS != "windows" {
 		return nil
 	}
-	_ = ctx
-	_ = logger
 
 	desktopDir := firstExisting(
 		filepath.Join(env.HomeDir, "Desktop"),
@@ -2415,12 +3016,28 @@ func createWinUtilDesktopShortcut(ctx context.Context, env Environment, logger *
 	if _, err := os.Stat(powershellPath); err != nil {
 		powershellPath = "powershell.exe"
 	}
+	launcherDir := filepath.Join(firstNonEmpty(os.Getenv("ProgramData"), `C:\ProgramData`), "Initra", "Launchers")
+	if err := os.MkdirAll(launcherDir, 0o755); err != nil {
+		return err
+	}
+	launcherPath := filepath.Join(launcherDir, "WinUtil-App-Installer.ps1")
+	launcher := `$ErrorActionPreference = 'Stop'
+Start-Process powershell -Verb RunAs -WindowStyle Normal -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command "irm https://christitus.com/win | iex"'
+`
+	if err := os.WriteFile(launcherPath, []byte(launcher), 0o644); err != nil {
+		return err
+	}
+	if env.IsAdmin {
+		if err := addDefenderExclusion(ctx, logger, launcherDir); err != nil {
+			logger.Println("winutil launcher defender exclusion failed", err)
+		}
+	}
 	iconPath := currentBinaryPath()
 	if iconPath == "" {
 		iconPath = powershellPath
 	}
 	shortcutPath := filepath.Join(desktopDir, "WinUtil - App Installer.lnk")
-	arguments := `-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command ""irm https://christitus.com/win | iex""'"`
+	arguments := fmt.Sprintf("-NoProfile -ExecutionPolicy Bypass -File %q", launcherPath)
 	if err := createWindowsShortcutEx(shortcutPath, powershellPath, env.HomeDir, arguments, iconPath); err != nil {
 		return err
 	}
@@ -2635,7 +3252,19 @@ func configureDefenderExclusion(ctx context.Context, env Environment, logger *Lo
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
-	return runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf(`Add-MpPreference -ExclusionPath '%s'`, path))
+	return addDefenderExclusion(ctx, logger, path)
+}
+
+func addDefenderExclusion(ctx context.Context, logger *Logger, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	return runWindowsPowerShellScript(ctx, logger, fmt.Sprintf(`Add-MpPreference -ExclusionPath %s`, psSingleQuoted(path)))
+}
+
+func psSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func removeEdge(ctx context.Context, env Environment, logger *Logger) error {
@@ -2713,7 +3342,7 @@ func runMASActivation(ctx context.Context, env Environment, logger *Logger) erro
 	if env.OS != "windows" {
 		return nil
 	}
-	// Démarrer MAS via PowerShell en élevant les privilèges ou simplement dans une nouvelle fenêtre console invisible pour la commande hôte, mais laissant MAS s'afficher si nécessaire
+	// Start MAS elevated in its own PowerShell window so its text menu remains usable.
 	script := "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command `\"irm https://get.activated.win | iex`\"\" -WindowStyle Hidden -Verb RunAs"
 	return runWindowsPowerShellScript(ctx, logger, script)
 }

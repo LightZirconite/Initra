@@ -72,18 +72,19 @@ type Preset struct {
 }
 
 type Item struct {
-	ID            string                 `yaml:"id"`
-	Name          string                 `yaml:"name"`
-	Category      string                 `yaml:"category"`
-	Description   string                 `yaml:"description"`
-	Platforms     []string               `yaml:"platforms"`
-	AutoApply     bool                   `yaml:"auto_apply"`
-	DependsOn     []string               `yaml:"depends_on"`
-	RequiresAdmin bool                   `yaml:"requires_admin"`
-	Notes         []string               `yaml:"notes"`
-	Inputs        []InputSpec            `yaml:"inputs"`
-	Detect        map[string]DetectSpec  `yaml:"detect"`
-	Install       map[string]InstallSpec `yaml:"install"`
+	ID              string                 `yaml:"id"`
+	Name            string                 `yaml:"name"`
+	Category        string                 `yaml:"category"`
+	Description     string                 `yaml:"description"`
+	Platforms       []string               `yaml:"platforms"`
+	AutoApply       bool                   `yaml:"auto_apply"`
+	ContinueOnError bool                   `yaml:"continue_on_error"`
+	DependsOn       []string               `yaml:"depends_on"`
+	RequiresAdmin   bool                   `yaml:"requires_admin"`
+	Notes           []string               `yaml:"notes"`
+	Inputs          []InputSpec            `yaml:"inputs"`
+	Detect          map[string]DetectSpec  `yaml:"detect"`
+	Install         map[string]InstallSpec `yaml:"install"`
 }
 
 type InputSpec struct {

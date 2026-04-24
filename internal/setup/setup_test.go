@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,9 @@ func TestLoadCatalog(t *testing.T) {
 	if !agent.AutoApply || !agent.RequiresAdmin {
 		t.Fatalf("expected initra-agent to be mandatory auto_apply admin item")
 	}
+	if !agent.ContinueOnError {
+		t.Fatalf("expected initra-agent failures to be non-fatal")
+	}
 	fastfetch, ok := catalog.itemByID("fastfetch")
 	if !ok {
 		t.Fatalf("expected fastfetch item in catalog")
@@ -54,6 +58,23 @@ func TestLoadCatalog(t *testing.T) {
 	}
 	if _, ok := catalog.itemByID("noisetorch"); !ok {
 		t.Fatalf("expected noisetorch item in catalog")
+	}
+	simplewall, ok := catalog.itemByID("simplewall")
+	if !ok {
+		t.Fatalf("expected simplewall item in catalog")
+	}
+	if !simplewall.AutoApply || !simplewall.RequiresAdmin {
+		t.Fatalf("expected simplewall to be mandatory auto_apply admin item")
+	}
+	if simplewall.Install["windows"].Methods[0].Type != "builtin" || simplewall.Install["windows"].Methods[0].Action != "simplewall" {
+		t.Fatalf("expected simplewall to use the builtin configuration flow")
+	}
+	firstRun, ok := catalog.itemByID("first-run-apps")
+	if !ok {
+		t.Fatalf("expected first-run-apps item in catalog")
+	}
+	if !firstRun.AutoApply {
+		t.Fatalf("expected first-run-apps to be auto_apply")
 	}
 }
 
@@ -110,11 +131,13 @@ func TestSortPlanByPhase(t *testing.T) {
 			{Item: Item{ID: "windows-update"}, Phase: phaseMaintenance},
 			{Item: Item{ID: "spotify"}, Phase: phaseApplications},
 			{Item: Item{ID: "theme-dark"}, Phase: phasePostUpdate},
+			{Item: Item{ID: "simplewall"}, Phase: phaseFinal},
+			{Item: Item{ID: "first-run-apps"}, Phase: phaseFirstRun},
 		},
 	}
 	sortPlanByPhase(&plan)
-	got := []string{plan.Steps[0].Item.ID, plan.Steps[1].Item.ID, plan.Steps[2].Item.ID}
-	want := []string{"windows-update", "spotify", "theme-dark"}
+	got := []string{plan.Steps[0].Item.ID, plan.Steps[1].Item.ID, plan.Steps[2].Item.ID, plan.Steps[3].Item.ID, plan.Steps[4].Item.ID}
+	want := []string{"windows-update", "spotify", "theme-dark", "first-run-apps", "simplewall"}
 	for idx := range want {
 		if got[idx] != want[idx] {
 			t.Fatalf("unexpected order: got %v want %v", got, want)
@@ -131,6 +154,15 @@ func TestPhaseForSleepPolicy(t *testing.T) {
 func TestPhaseForInitraAgent(t *testing.T) {
 	if got := phaseForItem(Item{ID: "initra-agent"}); got != phaseMaintenance {
 		t.Fatalf("unexpected phase for initra-agent: got %s want %s", got, phaseMaintenance)
+	}
+}
+
+func TestPhaseForFinalSteps(t *testing.T) {
+	if got := phaseForItem(Item{ID: "first-run-apps"}); got != phaseFirstRun {
+		t.Fatalf("unexpected phase for first-run-apps: got %s want %s", got, phaseFirstRun)
+	}
+	if got := phaseForItem(Item{ID: "simplewall"}); got != phaseFinal {
+		t.Fatalf("unexpected phase for simplewall: got %s want %s", got, phaseFinal)
 	}
 }
 
@@ -171,6 +203,172 @@ func TestDefaultSelectionForItemReflectsProfile(t *testing.T) {
 	}
 	if !defaultSelectionForItem(Item{ID: "proton-vpn"}, profile) {
 		t.Fatalf("expected non-selected item to default to yes for a consistent prompt flow")
+	}
+}
+
+func TestGitAuthCatalogItemFollowsGit(t *testing.T) {
+	catalog, err := loadCatalog(filepath.Join("..", "..", "catalog", "catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIdx, ok := catalog.itemIndex["git"]
+	if !ok {
+		t.Fatalf("expected git item in catalog")
+	}
+	authIdx, ok := catalog.itemIndex["git-auth"]
+	if !ok {
+		t.Fatalf("expected git-auth item in catalog")
+	}
+	if authIdx != gitIdx+1 {
+		t.Fatalf("expected git-auth immediately after git, got git=%d git-auth=%d", gitIdx, authIdx)
+	}
+	auth := catalog.Items[authIdx]
+	if len(auth.Inputs) == 0 || auth.Inputs[len(auth.Inputs)-1].Type != "password" {
+		t.Fatalf("expected git-auth to request a password-style token input")
+	}
+}
+
+func TestBundledSimplewallProfileIsValid(t *testing.T) {
+	profilePath := filepath.Join("..", "..", "app", "profile.xml")
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var profile simplewallProfile
+	if err := xml.Unmarshal(data, &profile); err != nil {
+		t.Fatalf("simplewall profile XML is invalid: %v", err)
+	}
+	if strings.Contains(strings.ToLower(string(data)), `c:\users\light`) || strings.Contains(strings.ToLower(string(data)), `app-1.`) {
+		t.Fatalf("simplewall profile should not contain user-specific app paths or app versions")
+	}
+	required := []string{
+		"System",
+		"%systemroot%\\system32\\svchost.exe",
+		"%systemroot%\\system32\\WindowsPowerShell\\v1.0\\powershell.exe",
+		"WinDefend",
+		"%programfiles%\\simplewall\\simplewall.exe",
+		"%programfiles%\\Initra Agent\\initra-agent.exe",
+	}
+	for _, want := range required {
+		found := false
+		for _, item := range profile.Apps.Items {
+			if strings.EqualFold(item.Path, want) && item.IsEnabled == "true" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected enabled simplewall profile entry %q", want)
+		}
+	}
+}
+
+func TestAugmentSimplewallProfileAddsCurrentSetupBinary(t *testing.T) {
+	source := filepath.Join("..", "..", "app", "profile.xml")
+	tempDir := t.TempDir()
+	programFiles := filepath.Join(tempDir, "Program Files")
+	t.Setenv("ProgramFiles", programFiles)
+	t.Setenv("SystemRoot", filepath.Join(tempDir, "Windows"))
+	target := filepath.Join(tempDir, "profile.xml")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := augmentSimplewallProfile(target, Environment{OS: "windows"}); err != nil {
+		t.Fatalf("augmentSimplewallProfile() error = %v", err)
+	}
+	augmented, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile() augmented error = %v", err)
+	}
+	if current := currentBinaryPath(); current != "" && !strings.Contains(strings.ToLower(string(augmented)), strings.ToLower(current)) {
+		t.Fatalf("expected augmented simplewall profile to include current setup binary %q", current)
+	}
+	if !strings.Contains(strings.ToLower(string(augmented)), strings.ToLower(programFiles+`\Initra Agent\initra-agent.exe`)) {
+		t.Fatalf("expected augmented simplewall profile to include Initra Agent")
+	}
+	if !strings.Contains(strings.ToLower(string(augmented)), strings.ToLower(programFiles+`\simplewall\simplewall.exe`)) {
+		t.Fatalf("expected augmented simplewall profile to include expanded simplewall path")
+	}
+	if !strings.Contains(strings.ToLower(string(augmented)), strings.ToLower(os.Getenv("SystemRoot")+`\system32\WindowsPowerShell\v1.0\powershell.exe`)) {
+		t.Fatalf("expected augmented simplewall profile to include expanded PowerShell path")
+	}
+}
+
+func TestExpandWindowsPercentEnv(t *testing.T) {
+	t.Setenv("ProgramFiles", `C:\Program Files`)
+	t.Setenv("LOCALAPPDATA", `C:\Users\Setup\AppData\Local`)
+
+	tests := map[string]string{
+		`%programfiles%\Initra Agent\initra-agent.exe`:     `C:\Program Files\Initra Agent\initra-agent.exe`,
+		`%LOCALAPPDATA%\Discord\Update.exe`:                `C:\Users\Setup\AppData\Local\Discord\Update.exe`,
+		`%unknown_variable%\Tool\tool.exe`:                 `%unknown_variable%\Tool\tool.exe`,
+		`System`:                                           `System`,
+		`%programfiles%\simplewall\%unknown_variable%.exe`: `C:\Program Files\simplewall\%unknown_variable%.exe`,
+	}
+	for input, want := range tests {
+		if got := expandWindowsPercentEnv(input); got != want {
+			t.Fatalf("expandWindowsPercentEnv(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestBuildPlanDoesNotWriteSimplewallProfile(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	catalog := Catalog{
+		Categories: []Category{{ID: "tweaks", Name: "Tweaks"}},
+		Items: []Item{
+			{
+				ID:        "simplewall",
+				Name:      "simplewall",
+				Category:  "tweaks",
+				Platforms: []string{"windows"},
+				AutoApply: true,
+				Install: map[string]InstallSpec{
+					"windows": {Methods: []Method{{Type: "builtin", Action: "simplewall"}}},
+				},
+			},
+		},
+	}
+	catalog.index()
+	if _, err := buildPlan(catalog, Environment{OS: "windows"}, newProfile("generic"), &Logger{}); err != nil {
+		t.Fatalf("buildPlan() error = %v", err)
+	}
+	profilePath := filepath.Join(tempDir, "Henry++", "simplewall", "profile.xml")
+	if _, err := os.Stat(profilePath); err == nil {
+		t.Fatalf("buildPlan created simplewall profile at %s", profilePath)
+	} else if !isMissing(err) {
+		t.Fatalf("stat simplewall profile: %v", err)
+	}
+}
+
+func TestNormalizeGitCredentialHost(t *testing.T) {
+	tests := map[string]string{
+		"git.justw.tf":                         "git.justw.tf",
+		"https://git.justw.tf/Light/setup-win": "git.justw.tf",
+		"http://gitea.example.com:3000/org/x":  "gitea.example.com:3000",
+		"gitea.example.com/org/repo":           "gitea.example.com",
+	}
+	for input, want := range tests {
+		if got := normalizeGitCredentialHost(input); got != want {
+			t.Fatalf("normalizeGitCredentialHost(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestFinalCompletedStatusWarnsOnFailedNonFatalStep(t *testing.T) {
+	report := SessionReport{
+		StepResults: []StepResult{
+			{ItemID: "initra-agent", Outcome: stepOutcomeFailed},
+			{ItemID: "firefox", Outcome: stepOutcomeInstalled},
+		},
+	}
+	if got := finalCompletedStatus(report); got != "completed_with_warnings" {
+		t.Fatalf("unexpected final status: got %s", got)
 	}
 }
 

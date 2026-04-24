@@ -33,7 +33,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 		fmt.Println()
 		manualIndex := 0
 		for _, item := range catalog.Items {
-			if item.Category != category.ID || !itemVisibleOn(item, env) || !profileDependencySatisfied(item, profile) {
+			if item.Category != category.ID || !itemVisibleInProfile(catalog, item, env, profile) {
 				continue
 			}
 			badges := itemBadges(item, env)
@@ -72,7 +72,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 				fmt.Println("     " + termUI.green("Preset: selected"))
 			}
 			defaultValue := defaultSelectionForItem(item, profile)
-			answer, err := promptYesNo(reader, "     Install?", defaultValue)
+			answer, err := promptYesNo(reader, itemSelectionPrompt(item), defaultValue)
 			if err != nil {
 				return profile, err
 			}
@@ -108,7 +108,7 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 			if description := strings.TrimSpace(input.Description); description != "" {
 				fmt.Printf("  %s\n", description)
 			}
-			value, err := promptString(reader, input.Prompt, defaultValue)
+			value, err := promptInput(reader, input, defaultValue)
 			if err != nil {
 				return profile, err
 			}
@@ -133,17 +133,24 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, 
 			return defaultValue, nil
 		}
 		switch line {
-		case "y", "yes":
+		case "y", "yes", "o", "oui":
 			return true, nil
 		case "n", "no":
 			return false, nil
 		}
-		fmt.Println("Press Enter to accept, or type n to refuse.")
+		fmt.Println("Press Enter to accept, or type n/o to answer.")
 	}
 }
 
 func defaultSelectionForItem(item Item, profile UserProfile) bool {
 	return true
+}
+
+func itemSelectionPrompt(item Item) string {
+	if item.ID == "git-auth" {
+		return "     Configure automatic Git authentication for Git/Gitea?"
+	}
+	return "     Install?"
 }
 
 func promptString(reader *bufio.Reader, prompt, defaultValue string) (string, error) {
@@ -163,6 +170,47 @@ func promptString(reader *bufio.Reader, prompt, defaultValue string) (string, er
 	return line, nil
 }
 
+func promptInput(reader *bufio.Reader, input InputSpec, defaultValue string) (string, error) {
+	if strings.EqualFold(strings.TrimSpace(input.Type), "password") {
+		return promptPassword(reader, input.Prompt, defaultValue)
+	}
+	return promptString(reader, input.Prompt, defaultValue)
+}
+
+func promptPassword(reader *bufio.Reader, prompt, defaultValue string) (string, error) {
+	if defaultValue == "" {
+		fmt.Printf("%s ", formatPrompt(prompt))
+	} else {
+		fmt.Printf("%s %s ", formatPrompt(prompt), termUI.dim("[configured]"))
+	}
+	restore, err := setStdinEcho(false)
+	if err != nil {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return "", readErr
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return defaultValue, nil
+		}
+		return line, nil
+	}
+	line, readErr := reader.ReadString('\n')
+	restoreErr := restore()
+	fmt.Println()
+	if readErr != nil {
+		return "", readErr
+	}
+	if restoreErr != nil {
+		return "", restoreErr
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultValue, nil
+	}
+	return line, nil
+}
+
 func confirmExecution() (bool, error) {
 	reader := bufio.NewReader(os.Stdin)
 	return promptYesNo(reader, "Proceed with execution?", true)
@@ -170,11 +218,36 @@ func confirmExecution() (bool, error) {
 
 func categoryHasVisibleItems(catalog Catalog, categoryID string, env Environment, profile UserProfile) bool {
 	for _, item := range catalog.Items {
-		if item.Category == categoryID && itemVisibleOn(item, env) && profileDependencySatisfied(item, profile) {
+		if item.Category == categoryID && itemVisibleInProfile(catalog, item, env, profile) {
 			return true
 		}
 	}
 	return false
+}
+
+func itemVisibleInProfile(catalog Catalog, item Item, env Environment, profile UserProfile) bool {
+	if !itemVisibleOn(item, env) {
+		return false
+	}
+	if item.ID == "git-auth" {
+		return gitAvailableForAuth(catalog, env, profile)
+	}
+	return profileDependencySatisfied(item, profile)
+}
+
+func gitAvailableForAuth(catalog Catalog, env Environment, profile UserProfile) bool {
+	if profile.Selected["git"] {
+		return true
+	}
+	if commandExists("git") {
+		return true
+	}
+	gitItem, ok := catalog.itemByID("git")
+	if !ok {
+		return false
+	}
+	installed, err := detectItemInstalled(gitItem, env)
+	return err == nil && installed
 }
 
 func resolveDefaultInput(input InputSpec, profile UserProfile, env Environment) string {
@@ -192,6 +265,10 @@ func resolveDefaultInput(input InputSpec, profile UserProfile, env Environment) 
 		return "en-US"
 	case "{{mesh_default_url}}":
 		return "https://mesh.lgtw.tf/meshagents?id=4&meshid=W4tZHM@Pv3686vWHJYUmulXYFna1tmZx6BZB3WATaGwMb05@ZjRaRnba@vn$uqhF&installflags=0"
+	case "{{git_default_host}}":
+		return defaultGitCredentialHost()
+	case "{{user_name}}":
+		return env.UserName
 	default:
 		if existing := profile.Inputs[input.ID]; existing != "" {
 			return existing

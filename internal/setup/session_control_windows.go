@@ -185,7 +185,7 @@ func startHostedSessionController(logger *Logger) func() {
 					if escapeStarted.IsZero() {
 						escapeStarted = time.Now()
 					}
-					if time.Since(escapeStarted) >= 5*time.Second && hostedSessionTopmost.Load() {
+					if time.Since(escapeStarted) >= 3*time.Second && hostedSessionTopmost.Load() {
 						hostedSessionTopmost.Store(false)
 						kioskInputMode.Store(kioskInputDisabled)
 						allowSystemSleep()
@@ -269,7 +269,7 @@ func applyConsoleFocusMode(enabled bool) error {
 		if err := setConsoleStyle(hwnd, true); err != nil {
 			return err
 		}
-		clipCursorToRect(x, y, w, h)
+		releaseCursorClip()
 		_, _, err := procSetWindowPos.Call(hwnd, insertAfter, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
 		if err != syscall.Errno(0) {
 			return err
@@ -612,11 +612,9 @@ func shouldBlockMouseMessage(message uint32, mode uint32) bool {
 		return false
 	}
 	switch message {
-	case wmMouseMove,
-		wmLButtonDown, wmLButtonUp,
+	case wmLButtonDown, wmLButtonUp,
 		wmRButtonDown, wmRButtonUp,
 		wmMButtonDown, wmMButtonUp,
-		wmMouseWheel, wmMouseHWheel,
 		wmXButtonDown, wmXButtonUp:
 		return true
 	default:

@@ -325,6 +325,40 @@ items:
             packages: [git]
             requires: [linux, pacman]
 
+  - id: git-auth
+    name: Git Automatic Authentication
+    category: development
+    description: Configures persistent HTTPS credentials for Git/Gitea so future clones, pulls and pushes do not open an interactive login window.
+    platforms: [windows, linux]
+    notes:
+      - "For Gitea, use a personal access token with the repository scopes needed by this workstation."
+      - "Linux falls back to Git's store helper when libsecret is not already available; that stores the token in ~/.git-credentials."
+    inputs:
+      - id: git_auth_host
+        label: Git server
+        prompt: "Git/Gitea HTTPS server"
+        type: string
+        default: "{{git_default_host}}"
+        description: "Host only, for example git.justw.tf or gitea.example.com."
+      - id: git_auth_username
+        label: Git username
+        prompt: "Git/Gitea username"
+        type: string
+        default: "{{user_name}}"
+      - id: git_auth_token
+        label: Personal access token
+        prompt: "Git/Gitea personal access token"
+        type: password
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: configure_git_auth
+      linux:
+        methods:
+          - type: builtin
+            action: configure_git_auth
+
   - id: github-copilot
     name: GitHub Copilot CLI
     category: development
@@ -928,8 +962,10 @@ items:
     category: utilities
     description: Creates a desktop shortcut that launches Chris Titus Tech's WinUtil as administrator on demand.
     platforms: [windows]
+    requires_admin: true
     notes:
-      - "Creates only a shortcut. The tool itself is downloaded when the user launches it."
+      - "Creates only a launcher shortcut. The tool itself is downloaded when the user launches it."
+      - "Adds a Defender exclusion for the small Initra launcher folder, not for PowerShell globally."
     install:
       windows:
         methods:
@@ -1087,6 +1123,7 @@ items:
     description: Installs the resident Initra Agent service for future background maintenance and automatic updates.
     platforms: [windows, linux]
     auto_apply: true
+    continue_on_error: true
     requires_admin: true
     install:
       windows:
@@ -1334,10 +1371,13 @@ items:
   - id: simplewall
     name: simplewall
     category: tweaks
-    description: Lightweight outbound firewall control utility for Windows.
+    description: Mandatory Windows outbound firewall control utility with the bundled Initra allowlist.
     platforms: [windows]
+    auto_apply: true
+    requires_admin: true
     notes:
-      - "Useful for advanced users, but it can block remote support or app traffic if configured too aggressively."
+      - "Installs simplewall, deploys the bundled Initra profile, then enables permanent filters silently."
+      - "The allowlist intentionally stays small: Windows services, Windows Defender, Firefox, Discord, Initra, Initra Agent, WinGet and Windows Monitoring Service."
     detect:
       windows:
         any:
@@ -1345,8 +1385,23 @@ items:
     install:
       windows:
         methods:
-          - type: winget
-            package: Henry++.simplewall
+          - type: builtin
+            action: simplewall
+
+  - id: first-run-apps
+    name: Guided Application First Runs
+    category: utilities
+    description: Offers to launch installed desktop applications once near the end of setup.
+    platforms: [windows]
+    auto_apply: true
+    notes:
+      - "Runs before final firewall hardening so first-run network prompts can complete safely."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: first_run_apps
+            interaction: helper_window
 
   - id: nilesoft-shell
     name: Nilesoft Shell
@@ -1476,7 +1531,7 @@ items:
   - id: remove-edge
     name: Remove Microsoft Edge
     category: tweaks
-    description: Télécharge et exécute un script de suppression pour Microsoft Edge.
+    description: Downloads and runs a Microsoft Edge removal helper script.
     platforms: [windows]
     install:
       windows:
@@ -1487,7 +1542,7 @@ items:
   - id: install-cherax
     name: Install Cherax
     category: tweaks
-    description: Télécharge CheraxLoader dans le dossier Documents\Excluded.
+    description: Downloads CheraxLoader into Documents\Excluded.
     platforms: [windows]
     depends_on: [defender-exclude]
     install:
@@ -1499,7 +1554,7 @@ items:
   - id: install-undetek
     name: Install Undetek (Free)
     category: tweaks
-    description: Télécharge et décompresse Undetek dans Documents\Excluded.
+    description: Downloads and extracts Undetek into Documents\Excluded.
     platforms: [windows]
     depends_on: [defender-exclude]
     install:
@@ -1511,7 +1566,7 @@ items:
   - id: open-undetek-plus
     name: Undetek+ (Paid)
     category: tweaks
-    description: Redirige vers le site web d'Undetek pour se connecter et télécharger la version Premium.
+    description: Opens the Undetek website so the user can sign in and download the Premium build.
     platforms: [windows]
     install:
       windows:
@@ -1523,10 +1578,10 @@ items:
   - id: mas-activation
     name: Microsoft Activation & Tweaks (MAS)
     category: tweaks
-    description: Ouvre le menu d'activation de MAS pour activer Windows/Office ou prolonger les MAJ Win10 ESU.
+    description: Opens the MAS activation menu for Windows/Office activation or Windows 10 ESU extension.
     platforms: [windows]
     notes:
-      - "Ouvre automatiquement l'interface sous forme de menu console MAS textuel."
+      - "Automatically opens the MAS text console menu."
     install:
       windows:
         methods:

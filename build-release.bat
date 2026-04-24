@@ -162,6 +162,10 @@ if exist "%ROOT%app\vencord-quickCss.css" (
   copy /Y "%ROOT%app\vencord-quickCss.css" "%ASSET_DIR%\vencord-quickCss.css" >nul
   if errorlevel 1 goto :fail
 )
+if exist "%ROOT%app\profile.xml" (
+  copy /Y "%ROOT%app\profile.xml" "%ASSET_DIR%\profile.xml" >nul
+  if errorlevel 1 goto :fail
+)
 
 echo [7/8] Writing manifest and checksums...
 if not exist "%WIN_BIN%" (

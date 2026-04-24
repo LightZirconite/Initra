@@ -113,13 +113,14 @@ func InstallService(opts Options) error {
 		return fmt.Errorf("could not resolve current executable")
 	}
 	target := filepath.Join(os.Getenv("ProgramFiles"), "Initra Agent", "initra-agent.exe")
+	_ = runCommandQuiet("sc.exe", "stop", ServiceName)
+	time.Sleep(3 * time.Second)
 	if filepath.Clean(source) != filepath.Clean(target) {
 		if err := copyFile(source, target, 0o755); err != nil {
 			return err
 		}
 	}
 	binPath := fmt.Sprintf(`"%s" run-service --base-url "%s"`, target, opts.BaseURL)
-	_ = runCommandQuiet("sc.exe", "stop", ServiceName)
 	_ = runCommandQuiet("sc.exe", "delete", ServiceName)
 	if err := runCommand("sc.exe", "create", ServiceName, "binPath=", binPath, "start=", "auto", "obj=", "LocalSystem", "DisplayName=", Name); err != nil {
 		return err

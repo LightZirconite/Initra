@@ -14,12 +14,18 @@ const (
 	phaseApplications = "applications"
 	phaseMaintenance  = "maintenance"
 	phasePostUpdate   = "post-update"
+	phaseFirstRun     = "first-run"
+	phaseFinal        = "final-hardening"
 )
 
 func phaseForItem(item Item) string {
 	switch item.ID {
 	case "windows-update", "driver-refresh", "windows-inbox-apps", "initra-agent", "consumer-cleanup":
 		return phaseMaintenance
+	case "first-run-apps":
+		return phaseFirstRun
+	case "simplewall":
+		return phaseFinal
 	case "auto-refresh-rate",
 		"theme-dark",
 		"sleep-policy",
@@ -46,6 +52,10 @@ func phaseWeight(name string) int {
 		return 1
 	case phasePostUpdate:
 		return 2
+	case phaseFirstRun:
+		return 3
+	case phaseFinal:
+		return 4
 	default:
 		return 99
 	}
@@ -59,6 +69,10 @@ func phaseDisplayName(name string) string {
 		return "Applications"
 	case phasePostUpdate:
 		return "Post-Update Personalization"
+	case phaseFirstRun:
+		return "Application First Runs"
+	case phaseFinal:
+		return "Final Hardening"
 	default:
 		return strings.Title(name)
 	}

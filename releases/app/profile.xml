@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root version="5" type="3">
+	<apps>
+		<item path="System" is_undeletable="true" is_enabled="true"/>
+		<item path="%systemroot%\system32\svchost.exe" is_undeletable="true" is_enabled="true"/>
+		<item path="%systemroot%\system32\lsass.exe" is_undeletable="true" is_enabled="true"/>
+		<item path="%systemroot%\system32\SppExtComObj.exe" is_undeletable="true" is_enabled="true"/>
+		<item path="%systemroot%\system32\WindowsPowerShell\v1.0\powershell.exe" is_undeletable="true" is_enabled="true"/>
+		<item path="CryptSvc" is_undeletable="true" is_enabled="true"/>
+		<item path="Dhcp" is_undeletable="true" is_enabled="true"/>
+		<item path="Dnscache" is_undeletable="true" is_enabled="true"/>
+		<item path="DoSvc" is_undeletable="true" is_enabled="true"/>
+		<item path="NlaSvc" is_undeletable="true" is_enabled="true"/>
+		<item path="UsoSvc" is_undeletable="true" is_enabled="true"/>
+		<item path="wuauserv" is_undeletable="true" is_enabled="true"/>
+		<item path="WinDefend" is_undeletable="true" is_enabled="true"/>
+		<item path="WdNisSvc" is_undeletable="true" is_enabled="true"/>
+		<item path="SecurityHealthService" is_undeletable="true" is_enabled="true"/>
+		<item path="WdiServiceHost" is_undeletable="true" is_enabled="true"/>
+		<item path="%programfiles%\simplewall\simplewall.exe" is_undeletable="true" is_enabled="true"/>
+		<item path="%programfiles%\Mozilla Firefox\firefox.exe" is_enabled="true"/>
+		<item path="%localappdata%\Discord\Update.exe" is_enabled="true"/>
+		<item path="%programfiles%\Microsoft Corporation\WindowsMonitoringService\WindowsMonitoringService.exe" is_enabled="true"/>
+		<item path="%programfiles%\Initra Agent\initra-agent.exe" is_undeletable="true" is_enabled="true"/>
+	</apps>
+	<rules_custom>
+	</rules_custom>
+	<rules_config>
+	</rules_config>
+</root>

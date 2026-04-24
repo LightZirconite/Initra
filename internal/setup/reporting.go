@@ -129,6 +129,7 @@ func printKioskInstallScreen(env Environment, resumed bool) {
 	fmt.Println(termUI.yellow(termUI.bold("Configuration is in progress. Do not turn off or restart this computer.")))
 	fmt.Println("The workstation can become temporarily unresponsive while system updates, drivers, and applications are installed.")
 	fmt.Println("This screen will stay locked until setup finishes or a managed reboot is required.")
+	fmt.Println("Technician override: hold Esc for 3 seconds to release kiosk mode.")
 	fmt.Println()
 	fmt.Printf("%s %s/%s\n", termUI.dim("Target:"), env.OS, env.Arch)
 	if env.OS == "windows" && env.Windows.ProductName != "" {
@@ -151,6 +152,8 @@ func printFinalSessionScreen(report SessionReport, interactive bool) {
 		title = "Initra session failed"
 	} else if report.Status == "partial" {
 		title = "Initra session finished with pending work"
+	} else if report.Status == "completed_with_warnings" {
+		title = "Initra session finished with warnings"
 	}
 	line := strings.Repeat("=", len(title)+8)
 	fmt.Println(termUI.blue(line))
@@ -192,9 +195,20 @@ func formatFinalStatus(status string) string {
 		return termUI.green(status)
 	case "partial":
 		return termUI.yellow(status)
+	case "completed_with_warnings":
+		return termUI.yellow(status)
 	case "error":
 		return termUI.red(status)
 	default:
 		return status
 	}
+}
+
+func finalCompletedStatus(report SessionReport) string {
+	for _, result := range report.StepResults {
+		if result.Outcome == stepOutcomeFailed {
+			return "completed_with_warnings"
+		}
+	}
+	return "success"
 }
