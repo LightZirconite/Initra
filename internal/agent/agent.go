@@ -161,7 +161,16 @@ func checkForUpdate(ctx context.Context, opts Options, paths platformPaths, logg
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(manifest.Version) == "" || manifest.Version == opts.Version || opts.Version == "dev" {
+	manifestVersion := strings.TrimSpace(manifest.Version)
+	switch {
+	case manifestVersion == "":
+		logger.Printf("update check completed: manifest has no version")
+		return nil
+	case opts.Version == "dev":
+		logger.Printf("update check completed: running dev build, manifest version=%s", manifestVersion)
+		return nil
+	case manifestVersion == opts.Version:
+		logger.Printf("update check completed: already current version=%s", opts.Version)
 		return nil
 	}
 	artifact, ok := SelectAgentArtifact(manifest, runtime.GOOS, runtime.GOARCH)
