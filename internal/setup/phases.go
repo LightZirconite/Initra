@@ -18,7 +18,7 @@ const (
 
 func phaseForItem(item Item) string {
 	switch item.ID {
-	case "windows-update", "driver-refresh", "windows-inbox-apps", "consumer-cleanup":
+	case "windows-update", "driver-refresh", "windows-inbox-apps", "initra-agent", "consumer-cleanup":
 		return phaseMaintenance
 	case "auto-refresh-rate",
 		"theme-dark",

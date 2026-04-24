@@ -39,6 +39,10 @@ func withWindowsFocusRelaxed(ctx context.Context, logger *Logger, fn func() erro
 	return fn()
 }
 
+func runWindowsSettingsURI(ctx context.Context, logger *Logger, uri string) error {
+	return nil
+}
+
 func stopProtonVPNProcesses(ctx context.Context, logger *Logger) error {
 	return nil
 }

@@ -1252,6 +1252,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, step Resol
 		return runDriverRefresh(ctx, env, logger)
 	case "windows_inbox_apps":
 		return restoreWindowsInboxApps(ctx, env, logger)
+	case "initra_agent":
+		return installInitraAgent(ctx, env, logger, baseURL)
 	case "defender_exclude":
 		return configureDefenderExclusion(ctx, env, logger, step.Inputs["defender_exclude_path"])
 	case "theme_dark":
@@ -1658,7 +1660,7 @@ func setFirefoxDefault(ctx context.Context, env Environment, logger *Logger) err
 			return nil
 		}
 		fmt.Println("Firefox could not set itself as default automatically. Opening Default Apps settings instead.")
-		return runProcess(ctx, env, logger, "cmd", "/c", "start", "", "ms-settings:defaultapps")
+		return runWindowsSettingsURI(ctx, logger, "ms-settings:defaultapps")
 	}
 
 	if !commandExists("firefox") {
@@ -2105,6 +2107,65 @@ func removeResumeHook(paths Paths) error {
 	return nil
 }
 
+func installInitraAgent(ctx context.Context, env Environment, logger *Logger, baseURL string) error {
+	manifestURL := strings.TrimRight(baseURL, "/") + "/releases/latest.json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("agent manifest returned %s", resp.Status)
+	}
+	var manifest manifestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return err
+	}
+
+	artifactKey := "agent-" + env.OS + "-" + env.Arch
+	artifactURL := strings.TrimSpace(manifest.Artifacts[artifactKey])
+	if artifactURL == "" {
+		return fmt.Errorf("manifest does not contain artifact %s", artifactKey)
+	}
+	fileName := "initra-agent-" + env.OS + "-" + env.Arch
+	if env.OS == "windows" {
+		fileName += ".exe"
+	}
+	target := filepath.Join(env.TempDir, fileName)
+	if err := downloadFile(ctx, artifactURL, target); err != nil {
+		return err
+	}
+	if expected := strings.TrimSpace(manifest.Sha256[artifactKey]); expected != "" {
+		got, err := sha256File(target)
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(got, expected) {
+			_ = os.Remove(target)
+			return fmt.Errorf("sha256 mismatch for downloaded Initra Agent artifact")
+		}
+	}
+	if env.OS != "windows" {
+		if err := os.Chmod(target, 0o755); err != nil {
+			return err
+		}
+	}
+	return runAgentInstaller(ctx, env, logger, target, baseURL)
+}
+
+func runAgentInstaller(ctx context.Context, env Environment, logger *Logger, binary, baseURL string) error {
+	args := []string{"install-service", "--base-url", baseURL}
+	if env.OS == "linux" && !env.IsAdmin && env.HasSudo {
+		fullArgs := append([]string{binary}, args...)
+		return runProcess(ctx, env, logger, "sudo", fullArgs...)
+	}
+	return runProcess(ctx, env, logger, binary, args...)
+}
+
 func downloadFile(ctx context.Context, url, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -2464,7 +2525,6 @@ Get-WUHistory | Select-Object -First 10 Date, Title, Result | Format-Table -Auto
 
 	if !pswuAvailable || updateErr != nil {
 		script := `
-try { Start-Process "ms-settings:windowsupdate" } catch {}
 try { UsoClient StartInteractiveScan } catch {}
 try { UsoClient StartScan } catch {}
 try { UsoClient StartDownload } catch {}
@@ -2473,6 +2533,7 @@ try { UsoClient StartInstall } catch {}
 		if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
 			return err
 		}
+		_ = runWindowsSettingsURI(ctx, logger, "ms-settings:windowsupdate")
 	}
 	if commandExists("winget") {
 		if err := runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {

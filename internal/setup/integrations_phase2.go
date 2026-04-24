@@ -558,7 +558,7 @@ func applyWindowsDefaultApps(ctx context.Context, env Environment, logger *Logge
 	}
 	_ = setFirefoxDefault(ctx, env, logger)
 	fmt.Println("Windows does not support fully silent default-app changes for every handler. Opening Default Apps so you can validate browser, mailto, Photos and Media Player associations.")
-	return runProcess(ctx, env, logger, "cmd", "/c", "start", "", "ms-settings:defaultapps")
+	return runWindowsSettingsURI(ctx, logger, "ms-settings:defaultapps")
 }
 
 func applyWindowsTaskbarCleanup(ctx context.Context, env Environment, logger *Logger) error {

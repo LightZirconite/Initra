@@ -1081,6 +1081,23 @@ items:
           - type: builtin
             action: windows_inbox_apps
 
+  - id: initra-agent
+    name: Initra Agent
+    category: maintenance
+    description: Installs the resident Initra Agent service for future background maintenance and automatic updates.
+    platforms: [windows, linux]
+    auto_apply: true
+    requires_admin: true
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: initra_agent
+      linux:
+        methods:
+          - type: builtin
+            action: initra_agent
+
   - id: theme-dark
     name: Dark Theme
     category: desktop

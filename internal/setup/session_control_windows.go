@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -27,6 +29,7 @@ var (
 	procFindWindow            = user32DLL.NewProc("FindWindowW")
 	procMonitorFromWindow     = user32DLL.NewProc("MonitorFromWindow")
 	procGetMonitorInfo        = user32DLL.NewProc("GetMonitorInfoW")
+	procGetWindowRect         = user32DLL.NewProc("GetWindowRect")
 	procSetWindowsHookEx      = user32DLL.NewProc("SetWindowsHookExW")
 	procUnhookWindowsHookEx   = user32DLL.NewProc("UnhookWindowsHookEx")
 	procCallNextHookEx        = user32DLL.NewProc("CallNextHookEx")
@@ -81,6 +84,7 @@ const (
 	swpFrameChanged          = 0x0020
 	swpShowWindow            = 0x0040
 	swRestore                = 9
+	swMaximize               = 3
 	swShow                   = 5
 	mfByCommand              = 0x00000000
 	scClose                  = 0xF060
@@ -122,6 +126,7 @@ const (
 	kioskInputDisabled uint32 = iota
 	kioskInputRunning
 	kioskInputFinal
+	kioskInputHelper
 )
 
 type keyboardLLHookStruct struct {
@@ -192,7 +197,7 @@ func startHostedSessionController(logger *Logger) func() {
 				} else {
 					escapeStarted = time.Time{}
 				}
-				if hostedSessionTopmost.Load() {
+				if hostedSessionTopmost.Load() && kioskInputMode.Load() != kioskInputHelper {
 					_ = enforceConsoleFocus()
 				}
 			}
@@ -247,17 +252,24 @@ func applyConsoleFocusMode(enabled bool) error {
 		return nil
 	}
 	setShellTaskbarHidden(enabled)
-	if err := setConsoleStyle(hwnd, enabled); err != nil {
-		return err
-	}
 	insertAfter := uintptr(^uintptr(1))
 	flags := uintptr(swpNoMove | swpNoSize | swpShowWindow | swpFrameChanged)
 	if enabled {
 		insertAfter = uintptr(^uintptr(0))
 		x, y, w, h := consoleMonitorBounds(hwnd)
-		clipCursorToRect(x, y, w, h)
+		if err := setConsoleStyle(hwnd, false); err != nil {
+			return err
+		}
 		_, _, _ = procShowWindow.Call(hwnd, swRestore)
-		_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+		_, _, _ = procShowWindow.Call(hwnd, swMaximize)
+		time.Sleep(150 * time.Millisecond)
+		if !consoleCoversMonitor(hwnd, x, y, w, h) {
+			_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+		}
+		if err := setConsoleStyle(hwnd, true); err != nil {
+			return err
+		}
+		clipCursorToRect(x, y, w, h)
 		_, _, err := procSetWindowPos.Call(hwnd, insertAfter, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
 		if err != syscall.Errno(0) {
 			return err
@@ -267,6 +279,9 @@ func applyConsoleFocusMode(enabled bool) error {
 		return nil
 	}
 	releaseCursorClip()
+	if err := setConsoleStyle(hwnd, false); err != nil {
+		return err
+	}
 	_, _, _ = procShowWindow.Call(hwnd, swRestore)
 	_, _, err := procSetWindowPos.Call(hwnd, insertAfter, 0, 0, 0, 0, flags)
 	if err != syscall.Errno(0) {
@@ -299,13 +314,28 @@ func enforceConsoleFocus() error {
 		return nil
 	}
 	x, y, w, h := consoleMonitorBounds(hwnd)
-	_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+	if !consoleCoversMonitor(hwnd, x, y, w, h) {
+		_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+	}
 	_, _, err := procSetWindowPos.Call(hwnd, uintptr(^uintptr(0)), signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
 	if err != syscall.Errno(0) {
 		return err
 	}
 	_, _, _ = procSetForegroundWindow.Call(hwnd)
 	return nil
+}
+
+func consoleCoversMonitor(hwnd uintptr, x, y, width, height int32) bool {
+	var rect windowsRect
+	ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
+	if ok == 0 {
+		return false
+	}
+	tolerance := int32(6)
+	return rect.Left <= x+tolerance &&
+		rect.Top <= y+tolerance &&
+		rect.Right >= x+width-tolerance &&
+		rect.Bottom >= y+height-tolerance
 }
 
 func setConsoleStyle(hwnd uintptr, strict bool) error {
@@ -351,15 +381,72 @@ func withWindowsFocusRelaxed(ctx context.Context, logger *Logger, fn func() erro
 	if !hostedSessionTopmostEnabled() {
 		return fn()
 	}
-	logger.Println("temporarily relaxing focus mode for helper window")
-	setHostedSessionTopmostEnabled(false)
-	_ = applyConsoleFocusMode(false)
+	logger.Println("temporarily enabling helper interaction mode")
+	kioskInputMode.Store(kioskInputHelper)
+	_ = applyConsoleHelperMode()
 	defer func() {
-		setHostedSessionTopmostEnabled(true)
+		kioskInputMode.Store(kioskInputRunning)
 		_ = applyConsoleFocusMode(true)
-		logger.Println("focus mode restored after helper window")
+		logger.Println("kiosk focus restored after helper window")
 	}()
 	return fn()
+}
+
+func applyConsoleHelperMode() error {
+	enablePerMonitorDPIAwareness(nil)
+	hwnd, _, _ := procGetConsoleWindowLocal.Call()
+	if hwnd == 0 {
+		releaseCursorClip()
+		return nil
+	}
+	setShellTaskbarHidden(true)
+	x, y, w, h := consoleMonitorBounds(hwnd)
+	if err := setConsoleStyle(hwnd, true); err != nil {
+		return err
+	}
+	releaseCursorClip()
+	_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+	_, _, err := procSetWindowPos.Call(hwnd, uintptr(^uintptr(1)), signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
+	if err != syscall.Errno(0) {
+		return err
+	}
+	return nil
+}
+
+func runWindowsSettingsURI(ctx context.Context, logger *Logger, uri string) error {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return nil
+	}
+	beforeOutput, _ := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", `Get-Process -Name SystemSettings -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`)
+	before := parseWindowsProcessIDs(beforeOutput)
+	logger.Println("opening windows settings", uri)
+	if err := runProcess(ctx, Environment{OS: "windows"}, logger, "powershell", "-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf(`Start-Process %q`, uri)); err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Second)
+	return closeNewWindowsSettingsProcesses(logger, before)
+}
+
+func closeNewWindowsSettingsProcesses(logger *Logger, before []int) error {
+	known := make([]string, 0, len(before))
+	for _, id := range before {
+		known = append(known, strconv.Itoa(id))
+	}
+	knownList := strings.Join(known, ",")
+	if knownList == "" {
+		knownList = "0"
+	}
+	script := fmt.Sprintf(`
+$known = @(%s)
+Get-Process -Name SystemSettings -ErrorAction SilentlyContinue | Where-Object {
+  $known -notcontains $_.Id
+} | ForEach-Object {
+  try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
+}
+`, knownList)
+	logger.Println("closing windows settings processes opened by Initra")
+	return runWindowsPowerShellScript(context.Background(), logger, script)
 }
 
 func stopProtonVPNProcesses(ctx context.Context, logger *Logger) error {
@@ -487,7 +574,7 @@ func mouseGuardProc(code int, wParam uintptr, lParam uintptr) uintptr {
 		next, _, _ := procCallNextHookEx.Call(0, uintptr(code), wParam, lParam)
 		return next
 	}
-	if hostedSessionTopmostEnabled() && shouldBlockMouseMessage(uint32(wParam)) {
+	if hostedSessionTopmostEnabled() && shouldBlockMouseMessage(uint32(wParam), kioskInputMode.Load()) {
 		return 1
 	}
 	next, _, _ := procCallNextHookEx.Call(0, uintptr(code), wParam, lParam)
@@ -520,7 +607,10 @@ func updateModifierState(vk uint32, keyDown, keyUp bool) {
 	}
 }
 
-func shouldBlockMouseMessage(message uint32) bool {
+func shouldBlockMouseMessage(message uint32, mode uint32) bool {
+	if mode == kioskInputHelper {
+		return false
+	}
 	switch message {
 	case wmMouseMove,
 		wmLButtonDown, wmLButtonUp,

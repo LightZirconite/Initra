@@ -29,6 +29,13 @@ func TestLoadCatalog(t *testing.T) {
 	if _, ok := catalog.itemByID("sleep-policy"); !ok {
 		t.Fatalf("expected sleep-policy item in catalog")
 	}
+	agent, ok := catalog.itemByID("initra-agent")
+	if !ok {
+		t.Fatalf("expected initra-agent item in catalog")
+	}
+	if !agent.AutoApply || !agent.RequiresAdmin {
+		t.Fatalf("expected initra-agent to be mandatory auto_apply admin item")
+	}
 	fastfetch, ok := catalog.itemByID("fastfetch")
 	if !ok {
 		t.Fatalf("expected fastfetch item in catalog")
@@ -118,6 +125,12 @@ func TestSortPlanByPhase(t *testing.T) {
 func TestPhaseForSleepPolicy(t *testing.T) {
 	if got := phaseForItem(Item{ID: "sleep-policy"}); got != phasePostUpdate {
 		t.Fatalf("unexpected phase for sleep-policy: got %s want %s", got, phasePostUpdate)
+	}
+}
+
+func TestPhaseForInitraAgent(t *testing.T) {
+	if got := phaseForItem(Item{ID: "initra-agent"}); got != phaseMaintenance {
+		t.Fatalf("unexpected phase for initra-agent: got %s want %s", got, phaseMaintenance)
 	}
 }
 
@@ -254,6 +267,19 @@ func TestSessionReportSerialization(t *testing.T) {
 	}
 	if !strings.Contains(text, `"item_id": "firefox"`) {
 		t.Fatalf("expected serialized step result, got %s", text)
+	}
+}
+
+func TestParseWindowsProcessIDs(t *testing.T) {
+	got := parseWindowsProcessIDs("123\r\n  44\nbad\n123\n7")
+	want := []int{7, 44, 123}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected ids: got %v want %v", got, want)
+	}
+	for idx := range want {
+		if got[idx] != want[idx] {
+			t.Fatalf("unexpected ids: got %v want %v", got, want)
+		}
 	}
 }
 
