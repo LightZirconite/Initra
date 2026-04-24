@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -555,7 +556,10 @@ func decodeJSONBody(reader io.Reader, value any) error {
 }
 
 func decodeJSONBytes(data []byte, value any) error {
-	text := strings.TrimPrefix(string(data), "\ufeff")
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	text := strings.TrimSpace(string(data))
+	text = strings.TrimPrefix(text, "\ufeff")
+	text = strings.TrimPrefix(text, "ï»¿")
 	return json.Unmarshal([]byte(text), value)
 }
 

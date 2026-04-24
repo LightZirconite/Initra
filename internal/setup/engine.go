@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
@@ -309,10 +308,6 @@ func extraItemWarnings(item Item, env Environment, inputs map[string]string) []s
 		warnings = append(warnings, "Fastfetch is a terminal info command. It is installed for convenience but does not replace the default terminal app.")
 	case "localsend":
 		warnings = append(warnings, "LocalSend can need local firewall or private-network permission changes before nearby devices become visible.")
-	case "everything-toolbar":
-		warnings = append(warnings, "EverythingToolbar installs Everything automatically because the toolbar depends on the Everything search indexer.")
-	case "simplewall":
-		warnings = append(warnings, "simplewall is applied at the end of setup so installs and first-run network prompts can complete first.")
 	case "winutil-shortcut":
 		warnings = append(warnings, "WinUtil is not bundled. The desktop shortcut downloads the official script only when the user launches it.")
 	}
@@ -407,9 +402,6 @@ func selectionStateForItem(item Item, profile UserProfile) string {
 }
 
 func resolvePlannedAction(item Item, method Method, env Environment, logger *Logger) (string, error) {
-	if item.ID == "simplewall" && method.Type == "builtin" && method.Action == "simplewall" {
-		return stepActionInstall, nil
-	}
 	switch {
 	case method.Type == "winget" && env.OS == "windows":
 		state, err := detectWingetPackageState(item, method.Package, env, logger)
@@ -1058,7 +1050,7 @@ func executeStep(ctx context.Context, plan Plan, step ResolvedStep, env Environm
 		}
 	}
 	var err error
-	if env.OS == "windows" && stepInteraction(step) == methodInteractionHelper {
+	if stepAllowsExternalWindows(env, step, interactive) {
 		err = withWindowsFocusRelaxed(ctx, logger, run)
 	} else {
 		err = run()
@@ -1078,6 +1070,21 @@ func stepInteraction(step ResolvedStep) string {
 		return methodInteractionUnattended
 	}
 	return step.Method.Interaction
+}
+
+func stepAllowsExternalWindows(env Environment, step ResolvedStep, interactive bool) bool {
+	if !interactive || env.OS != "windows" {
+		return false
+	}
+	if stepInteraction(step) == methodInteractionHelper {
+		return true
+	}
+	switch step.Method.Type {
+	case "winget", "direct":
+		return true
+	default:
+		return false
+	}
 }
 
 func runWingetAction(ctx context.Context, env Environment, logger *Logger, id, action string) error {
@@ -1415,8 +1422,6 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, plan Plan,
 		return installVencord(ctx, env, logger, baseURL)
 	case "stoat":
 		return installStoat(ctx, env, logger)
-	case "everything_toolbar":
-		return installEverythingToolbar(ctx, env, logger)
 	case "windows_update":
 		return runWindowsMaintenance(ctx, env, logger)
 	case "driver_refresh":
@@ -1427,8 +1432,6 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, plan Plan,
 		return installInitraAgent(ctx, env, logger, baseURL)
 	case "defender_exclude":
 		return configureDefenderExclusion(ctx, env, logger, step.Inputs["defender_exclude_path"])
-	case "simplewall":
-		return installAndConfigureSimplewall(ctx, env, logger, baseURL)
 	case "first_run_apps":
 		return runGuidedFirstRuns(ctx, env, logger, plan, interactive)
 	case "theme_dark":
@@ -2544,320 +2547,6 @@ func installNoiseTorch(ctx context.Context, env Environment, logger *Logger) err
 	return nil
 }
 
-func installEverythingToolbar(ctx context.Context, env Environment, logger *Logger) error {
-	if env.OS != "windows" {
-		return nil
-	}
-	if err := ensureWingetPackage(ctx, env, logger, "voidtools.Everything"); err != nil {
-		return err
-	}
-
-	toolbarPackage := "srwi.EverythingToolbar.Launcher"
-	if isWindows10(env) {
-		toolbarPackage = "srwi.EverythingToolbar.Deskband"
-	}
-	if err := ensureWingetPackage(ctx, env, logger, toolbarPackage); err != nil {
-		return err
-	}
-
-	if isWindows10(env) {
-		fmt.Println("EverythingToolbar was installed. On Windows 10 you may still need to enable it from the taskbar Toolbars menu.")
-	} else {
-		fmt.Println("EverythingToolbar was installed. If the setup assistant does not appear automatically, launch it from Start.")
-	}
-	return nil
-}
-
-type simplewallProfile struct {
-	XMLName     xml.Name                 `xml:"root"`
-	Version     string                   `xml:"version,attr"`
-	Type        string                   `xml:"type,attr"`
-	Timestamp   string                   `xml:"timestamp,attr,omitempty"`
-	Apps        simplewallProfileApps    `xml:"apps"`
-	RulesCustom simplewallProfileSection `xml:"rules_custom"`
-	RulesConfig simplewallProfileSection `xml:"rules_config"`
-}
-
-type simplewallProfileApps struct {
-	Items []simplewallProfileApp `xml:"item"`
-}
-
-type simplewallProfileApp struct {
-	Path          string `xml:"path,attr"`
-	Timestamp     string `xml:"timestamp,attr,omitempty"`
-	IsUndeletable string `xml:"is_undeletable,attr,omitempty"`
-	IsEnabled     string `xml:"is_enabled,attr,omitempty"`
-}
-
-type simplewallProfileSection struct{}
-
-func installAndConfigureSimplewall(ctx context.Context, env Environment, logger *Logger, baseURL string) error {
-	if env.OS != "windows" {
-		return nil
-	}
-	if !env.IsAdmin {
-		return errors.New("simplewall configuration requires administrator rights")
-	}
-	if err := ensureWinget(ctx, env, logger); err != nil {
-		return err
-	}
-	if err := ensureWingetPackage(ctx, env, logger, "Henry++.simplewall"); err != nil {
-		return err
-	}
-
-	_ = exec.CommandContext(ctx, "taskkill", "/IM", "simplewall.exe", "/F").Run()
-
-	profileSource, cleanup, err := resolveAssetPath(ctx, env, baseURL, "app/profile.xml")
-	if err != nil {
-		return fmt.Errorf("resolve simplewall profile: %w", err)
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	profileDir, err := simplewallProfileDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(profileDir, 0o755); err != nil {
-		return err
-	}
-	profileTarget := filepath.Join(profileDir, "profile.xml")
-	if err := copyFile(profileSource, profileTarget, 0o644); err != nil {
-		return err
-	}
-	if err := augmentSimplewallProfile(profileTarget, env); err != nil {
-		return err
-	}
-
-	exe := findSimplewallExecutable()
-	if exe == "" {
-		return errors.New("simplewall executable was not found after installation")
-	}
-	if err := runProcess(ctx, env, logger, exe, "-install", "-silent"); err != nil {
-		return err
-	}
-	fmt.Println("simplewall profile deployed and permanent filters enabled.")
-	return nil
-}
-
-func simplewallProfileDir() (string, error) {
-	appData := strings.TrimSpace(os.Getenv("APPDATA"))
-	if appData == "" {
-		return "", errors.New("APPDATA is not set")
-	}
-	return filepath.Join(appData, "Henry++", "simplewall"), nil
-}
-
-func findSimplewallExecutable() string {
-	candidates := []string{
-		filepath.Join(os.Getenv("ProgramFiles"), "simplewall", "simplewall.exe"),
-		filepath.Join(os.Getenv("ProgramFiles(x86)"), "simplewall", "simplewall.exe"),
-	}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	if path, err := exec.LookPath("simplewall.exe"); err == nil {
-		return path
-	}
-	return ""
-}
-
-func augmentSimplewallProfile(path string, env Environment) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var profile simplewallProfile
-	if err := xml.Unmarshal(data, &profile); err != nil {
-		return err
-	}
-	if profile.Version == "" {
-		profile.Version = "5"
-	}
-	if profile.Type == "" {
-		profile.Type = "3"
-	}
-	expandSimplewallProfileVariables(&profile)
-	for _, appPath := range detectedSimplewallAllowedApps(env) {
-		profile.addAllowedApp(appPath, true)
-	}
-	output, err := xml.MarshalIndent(profile, "", "\t")
-	if err != nil {
-		return err
-	}
-	output = append([]byte(xml.Header), output...)
-	output = append(output, '\n')
-	return os.WriteFile(path, output, 0o644)
-}
-
-func expandSimplewallProfileVariables(profile *simplewallProfile) {
-	existing := append([]simplewallProfileApp(nil), profile.Apps.Items...)
-	for _, item := range existing {
-		if !strings.EqualFold(item.IsEnabled, "true") {
-			continue
-		}
-		expanded := expandWindowsPercentEnv(item.Path)
-		if expanded == "" || strings.EqualFold(expanded, item.Path) {
-			continue
-		}
-		profile.addAllowedApp(expanded, strings.EqualFold(item.IsUndeletable, "true"))
-	}
-}
-
-func expandWindowsPercentEnv(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || !strings.Contains(value, "%") {
-		return value
-	}
-	var builder strings.Builder
-	for idx := 0; idx < len(value); {
-		if value[idx] != '%' {
-			builder.WriteByte(value[idx])
-			idx++
-			continue
-		}
-		end := strings.IndexByte(value[idx+1:], '%')
-		if end < 0 {
-			builder.WriteByte(value[idx])
-			idx++
-			continue
-		}
-		end += idx + 1
-		name := value[idx+1 : end]
-		if name == "" {
-			builder.WriteString("%%")
-			idx = end + 1
-			continue
-		}
-		if replacement, ok := lookupEnvInsensitive(name); ok {
-			builder.WriteString(replacement)
-		} else {
-			builder.WriteString(value[idx : end+1])
-		}
-		idx = end + 1
-	}
-	return builder.String()
-}
-
-func lookupEnvInsensitive(name string) (string, bool) {
-	if value, ok := os.LookupEnv(name); ok {
-		return value, true
-	}
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if ok && strings.EqualFold(key, name) {
-			return value, true
-		}
-	}
-	return "", false
-}
-
-func (p *simplewallProfile) addAllowedApp(path string, undeletable bool) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return
-	}
-	for idx := range p.Apps.Items {
-		if strings.EqualFold(p.Apps.Items[idx].Path, path) {
-			p.Apps.Items[idx].IsEnabled = "true"
-			if undeletable {
-				p.Apps.Items[idx].IsUndeletable = "true"
-			}
-			return
-		}
-	}
-	item := simplewallProfileApp{Path: path, IsEnabled: "true"}
-	if undeletable {
-		item.IsUndeletable = "true"
-	}
-	p.Apps.Items = append(p.Apps.Items, item)
-}
-
-func detectedSimplewallAllowedApps(env Environment) []string {
-	paths := []string{
-		findSimplewallExecutable(),
-		windowsKnownFolderPath("ProgramFiles", "Initra Agent", "initra-agent.exe"),
-		currentBinaryPath(),
-		gitExecutable(env),
-		firstExisting(
-			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "libexec", "git-core", "git-remote-https.exe"),
-			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "libexec", "git-core", "git-remote-https.exe"),
-		),
-		firstExisting(
-			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "libexec", "git-core", "git-credential-manager.exe"),
-			windowsKnownFolderPath("ProgramFiles", "Git", "mingw64", "bin", "git-credential-manager.exe"),
-			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "libexec", "git-core", "git-credential-manager.exe"),
-			windowsKnownFolderPath("ProgramFiles(x86)", "Git", "mingw64", "bin", "git-credential-manager.exe"),
-		),
-		firstExisting(
-			windowsSystemPath("System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-			windowsSystemPath("SysWOW64", "WindowsPowerShell", "v1.0", "powershell.exe"),
-		),
-		findFirefoxBinaryWindows(),
-		firstExisting(
-			windowsKnownFolderPath("ProgramFiles", "Microsoft Corporation", "WindowsMonitoringService", "WindowsMonitoringService.exe"),
-			windowsKnownFolderPath("ProgramFiles(x86)", "Microsoft Corporation", "WindowsMonitoringService", "WindowsMonitoringService.exe"),
-		),
-		firstExisting(
-			windowsKnownFolderPath("ProgramFiles", "Windows Defender", "MsMpEng.exe"),
-			windowsKnownFolderPath("ProgramFiles(x86)", "Windows Defender", "MsMpEng.exe"),
-		),
-	}
-	if wingetPath, err := exec.LookPath("winget"); err == nil {
-		paths = append(paths, wingetPath)
-	}
-	if powershellPath, err := exec.LookPath("powershell"); err == nil {
-		paths = append(paths, powershellPath)
-	}
-	if pwshPath, err := exec.LookPath("pwsh"); err == nil {
-		paths = append(paths, pwshPath)
-	}
-	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramData", "Microsoft", "Windows Defender", "Platform", "*", "MsMpEng.exe")))
-	paths = append(paths, latestGlob(windowsKnownFolderPath("LOCALAPPDATA", "Discord", "app-*", "Discord.exe")))
-	paths = append(paths, latestGlob(windowsKnownFolderPath("LOCALAPPDATA", "Discord", "app-*", "Squirrel.exe")))
-	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramFiles", "WindowsApps", "Microsoft.DesktopAppInstaller_*", "winget.exe")))
-	paths = append(paths, latestGlob(windowsKnownFolderPath("ProgramFiles", "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerServer.exe")))
-
-	seen := map[string]bool{}
-	allowed := make([]string, 0, len(paths))
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if path == "" || seen[strings.ToLower(path)] {
-			continue
-		}
-		seen[strings.ToLower(path)] = true
-		allowed = append(allowed, path)
-	}
-	return allowed
-}
-
-func windowsKnownFolderPath(envName string, parts ...string) string {
-	root, ok := lookupEnvInsensitive(envName)
-	if !ok || strings.TrimSpace(root) == "" {
-		return ""
-	}
-	allParts := append([]string{root}, parts...)
-	return filepath.Join(allParts...)
-}
-
-func windowsSystemPath(parts ...string) string {
-	root, ok := lookupEnvInsensitive("SystemRoot")
-	if !ok || strings.TrimSpace(root) == "" {
-		root, ok = lookupEnvInsensitive("WINDIR")
-	}
-	if !ok || strings.TrimSpace(root) == "" {
-		return ""
-	}
-	allParts := append([]string{root}, parts...)
-	return filepath.Join(allParts...)
-}
-
 func latestGlob(pattern string) string {
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
@@ -2951,7 +2640,6 @@ func resolvedFirstRunCandidates(plan Plan, env Environment) []firstRunCandidate 
 		{ID: "quicklook", Name: "QuickLook", Paths: []string{filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "QuickLook", "QuickLook.exe")}},
 		{ID: "powertoys", Name: "PowerToys", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "PowerToys", "PowerToys.exe")}},
 		{ID: "unigetui", Name: "UniGetUI", Paths: []string{filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "UniGetUI", "UniGetUI.exe")}},
-		{ID: "everything-toolbar", Name: "EverythingToolbar", Paths: []string{filepath.Join(os.Getenv("ProgramFiles"), "EverythingToolbar", "EverythingToolbar.Launcher.exe")}},
 		{ID: "stoat", Name: "Stoat", Paths: []string{latestGlob(filepath.Join(os.Getenv("LOCALAPPDATA"), "Stoat", "app-*", "Stoat Desktop.exe"))}},
 	}
 
@@ -2981,8 +2669,6 @@ func resolvedFirstRunCandidates(plan Plan, env Environment) []firstRunCandidate 
 
 func firstRunAutoApplyAllowed(id string) bool {
 	switch id {
-	case "everything-toolbar":
-		return true
 	default:
 		return false
 	}

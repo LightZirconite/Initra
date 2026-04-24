@@ -47,3 +47,13 @@ func TestDecodeJSONBodyAllowsUTF8BOM(t *testing.T) {
 		t.Fatalf("unexpected version: %s", payload.Version)
 	}
 }
+
+func TestDecodeJSONBodyAllowsMojibakeBOM(t *testing.T) {
+	var payload manifestResponse
+	if err := decodeJSONBody(strings.NewReader("ï»¿{\"version\":\"ok\"}"), &payload); err != nil {
+		t.Fatalf("decodeJSONBody() error = %v", err)
+	}
+	if payload.Version != "ok" {
+		t.Fatalf("unexpected version: %s", payload.Version)
+	}
+}

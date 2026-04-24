@@ -919,27 +919,6 @@ items:
           - type: winget
             package: Microsoft.PowerToys
 
-  - id: everything-toolbar
-    name: EverythingToolbar
-    category: utilities
-    description: Installs Everything plus taskbar search integration.
-    platforms: [windows]
-    notes:
-      - "Everything is installed automatically first because EverythingToolbar depends on it."
-      - "Windows 11 uses the launcher package. Windows 10 uses the deskband package."
-      - "On Windows 10 you can still need to enable the taskbar toolbar manually after install."
-    detect:
-      windows:
-        any:
-          - "winget list --disable-interactivity --id srwi.EverythingToolbar.Launcher -e"
-          - "winget list --disable-interactivity --id srwi.EverythingToolbar.Deskband -e"
-    install:
-      windows:
-        methods:
-          - type: builtin
-            action: everything_toolbar
-            interaction: helper_window
-
   - id: unigetui
     name: UniGetUI
     category: utilities
@@ -956,6 +935,21 @@ items:
         methods:
           - type: winget
             package: Devolutions.UniGetUI
+
+  - id: rytunex
+    name: RyTuneX
+    category: utilities
+    description: Windows tuning utility installed from the Microsoft Store through Winget.
+    platforms: [windows]
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id 9PDH8M7HF2SQ -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: 9PDH8M7HF2SQ
 
   - id: winutil-shortcut
     name: WinUtil Desktop Shortcut
@@ -1368,26 +1362,6 @@ items:
           - type: builtin
             action: tweak_security
 
-  - id: simplewall
-    name: simplewall
-    category: tweaks
-    description: Mandatory Windows outbound firewall control utility with the bundled Initra allowlist.
-    platforms: [windows]
-    auto_apply: true
-    requires_admin: true
-    notes:
-      - "Installs simplewall, deploys the bundled Initra profile, then enables permanent filters silently."
-      - "The allowlist intentionally stays small: Windows services, Windows Defender, Firefox, Discord, Initra, Initra Agent, WinGet and Windows Monitoring Service."
-    detect:
-      windows:
-        any:
-          - "winget list --disable-interactivity --id Henry++.simplewall -e"
-    install:
-      windows:
-        methods:
-          - type: builtin
-            action: simplewall
-
   - id: first-run-apps
     name: Guided Application First Runs
     category: utilities
@@ -1395,7 +1369,7 @@ items:
     platforms: [windows]
     auto_apply: true
     notes:
-      - "Runs before final firewall hardening so first-run network prompts can complete safely."
+      - "Runs near the end of setup so application first-run prompts can complete while the technician is still present."
     install:
       windows:
         methods:

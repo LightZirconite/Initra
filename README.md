@@ -53,12 +53,11 @@ Expected release files:
 - `releases/catalog/catalog.yaml`
 - `releases/app/pack-emoji.ttf`
 - `releases/app/marketplace-settings.json`
-- `releases/app/profile.xml`
 - `releases/app/vencord-settings.json`
 - `releases/assets/firefox/layout/ui-layout.json`
 - `releases/assets/wallpaper.png`
 
-Source assets live under `app/` and `assets/`. The `releases/` tree is the staged/published copy consumed by the bootstrap scripts, so release builds copy files such as `app/profile.xml` into `releases/app/`.
+Source assets live under `app/` and `assets/`. The `releases/` tree is the staged/published copy consumed by the bootstrap scripts, so release builds copy app and asset files into `releases/`.
 
 ## Local Use
 

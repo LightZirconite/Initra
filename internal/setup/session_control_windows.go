@@ -386,10 +386,33 @@ func withWindowsFocusRelaxed(ctx context.Context, logger *Logger, fn func() erro
 	_ = applyConsoleHelperMode()
 	defer func() {
 		kioskInputMode.Store(kioskInputRunning)
-		_ = applyConsoleFocusMode(true)
+		_ = applyConsoleGuardMode()
 		logger.Println("kiosk focus restored after helper window")
 	}()
 	return fn()
+}
+
+func applyConsoleGuardMode() error {
+	enablePerMonitorDPIAwareness(nil)
+	hwnd, _, _ := procGetConsoleWindowLocal.Call()
+	if hwnd == 0 {
+		releaseCursorClip()
+		return nil
+	}
+	setShellTaskbarHidden(true)
+	x, y, w, h := consoleMonitorBounds(hwnd)
+	if err := setConsoleStyle(hwnd, true); err != nil {
+		return err
+	}
+	releaseCursorClip()
+	if !consoleCoversMonitor(hwnd, x, y, w, h) {
+		_, _, _ = procMoveWindow.Call(hwnd, signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), 1)
+	}
+	_, _, err := procSetWindowPos.Call(hwnd, uintptr(^uintptr(0)), signedIntArg(x), signedIntArg(y), signedIntArg(w), signedIntArg(h), uintptr(swpShowWindow|swpFrameChanged))
+	if err != syscall.Errno(0) {
+		return err
+	}
+	return nil
 }
 
 func applyConsoleHelperMode() error {
