@@ -158,6 +158,18 @@ func TestPhaseForFinalSteps(t *testing.T) {
 	}
 }
 
+func TestApplicationFailuresCanContinue(t *testing.T) {
+	if !stepFailureCanContinue(ResolvedStep{Item: Item{ID: "spotify"}, Phase: phaseApplications}) {
+		t.Fatalf("expected application failure to be non-fatal")
+	}
+	if stepFailureCanContinue(ResolvedStep{Item: Item{ID: "windows-update"}, Phase: phaseMaintenance}) {
+		t.Fatalf("expected maintenance failure to remain fatal unless explicitly marked")
+	}
+	if !stepFailureCanContinue(ResolvedStep{Item: Item{ID: "initra-agent", ContinueOnError: true}, Phase: phaseMaintenance}) {
+		t.Fatalf("expected explicit continue_on_error to remain non-fatal")
+	}
+}
+
 func TestUnwrapVencordSettings(t *testing.T) {
 	raw := []byte(`{"settings":{"foo":true,"bar":{"baz":"qux"}}}`)
 	unwrapped, err := unwrapVencordSettings(raw)

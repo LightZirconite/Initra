@@ -798,6 +798,13 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
 		if err := ensureStepPrerequisites(ctx, state.Plan, step, env, logger); err != nil {
+			handled, handleErr := handleWingetPrerequisiteFailure(ctx, paths, env, logger, &state, &report, idx, step, err, interactive, "")
+			if handleErr != nil {
+				return handleErr
+			}
+			if handled {
+				return nil
+			}
 			recordExecutedStepResult(&report, step, startedStep, err)
 			report.Status = "error"
 			report.Error = fmt.Sprintf("%s prerequisites: %v", step.Item.Name, err)
@@ -809,7 +816,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		}
 		if err := executeStep(ctx, plan, step, env, logger, baseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
-			if step.Item.ContinueOnError {
+			if stepFailureCanContinue(step) {
 				warning := fmt.Sprintf("%s failed but setup continued: %v", step.Item.Name, err)
 				report.Warnings = uniqueStrings(append(report.Warnings, warning))
 				state.Completed = append(state.Completed, step.Item.ID)
@@ -953,6 +960,13 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
 		if err := ensureStepPrerequisites(ctx, state.Plan, step, env, logger); err != nil {
+			handled, handleErr := handleWingetPrerequisiteFailure(ctx, paths, env, logger, &state, &report, idx, step, err, interactive, "resume ")
+			if handleErr != nil {
+				return handleErr
+			}
+			if handled {
+				return nil
+			}
 			recordExecutedStepResult(&report, step, startedStep, err)
 			report.Status = "error"
 			report.Error = fmt.Sprintf("resume %s prerequisites: %v", step.Item.Name, err)
@@ -964,7 +978,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		}
 		if err := executeStep(ctx, state.Plan, step, env, logger, state.BaseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
-			if step.Item.ContinueOnError {
+			if stepFailureCanContinue(step) {
 				warning := fmt.Sprintf("%s failed during resume but setup continued: %v", step.Item.Name, err)
 				report.Warnings = uniqueStrings(append(report.Warnings, warning))
 				state.Completed = append(state.Completed, step.Item.ID)
@@ -1052,6 +1066,54 @@ func cleanupInterruptedSession(paths Paths, logger *Logger) {
 	if err := os.Remove(paths.StatePath); err != nil && !isMissing(err) && logger != nil {
 		logger.Println("remove interrupted session state failed", err)
 	}
+}
+
+func handleWingetPrerequisiteFailure(ctx context.Context, paths Paths, env Environment, logger *Logger, state *RunState, report *SessionReport, idx int, step ResolvedStep, prereqErr error, interactive bool, labelPrefix string) (bool, error) {
+	if env.OS != "windows" || state == nil || report == nil || !stepNeedsWinget(state.Plan, step) || !shouldRetryWingetBootstrapAfterReboot(env) {
+		return false, nil
+	}
+	attemptKey := "winget-bootstrap-reboot"
+	state.Attempts[attemptKey]++
+	attempt := state.Attempts[attemptKey]
+	if attempt > maxWingetBootstrapReboots {
+		logger.Println("winget bootstrap reboot retry limit reached", prereqErr)
+		return false, nil
+	}
+
+	message := fmt.Sprintf("WinGet/App Installer is not ready yet on this Windows image. Initra will run one more Windows Update pass, reboot, and retry automatically (%d/%d).", attempt, maxWingetBootstrapReboots)
+	fmt.Println(message)
+	logger.Println("winget prerequisite failed; scheduling update/reboot retry", "attempt", attempt, "error", prereqErr)
+	if err := runWindowsMaintenance(ctx, env, logger); err != nil {
+		warning := fmt.Sprintf("Windows Update retry before WinGet bootstrap reboot reported: %v", err)
+		report.Warnings = uniqueStrings(append(report.Warnings, warning))
+		logger.Println(warning)
+	}
+
+	state.PendingReboot = true
+	state.NextStep = idx
+	state.UpdatedAt = time.Now()
+	report.Status = "partial"
+	report.PendingReboot = true
+	report.Error = ""
+	report.FinishedAt = time.Now()
+	if err := saveSessionReport(state.ReportPath, report); err != nil {
+		return true, err
+	}
+	reason := fmt.Sprintf("%s%s prerequisites are waiting on Windows servicing. Initra will resume automatically after reboot.", labelPrefix, step.Item.Name)
+	if interactive {
+		reason = message
+	}
+	if err := persistRebootState(paths, logger, state, reason); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func shouldRetryWingetBootstrapAfterReboot(env Environment) bool {
+	if env.OS != "windows" {
+		return false
+	}
+	return env.IsAdmin
 }
 
 func ensureStepPrerequisites(ctx context.Context, plan Plan, step ResolvedStep, env Environment, logger *Logger) error {

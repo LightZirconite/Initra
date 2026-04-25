@@ -1,6 +1,6 @@
 {
-    "version":  "8792cdb-dirty",
-    "published":  "2026-04-25T15:02:09.4458097Z",
+    "version":  "5526815-dirty",
+    "published":  "2026-04-25T15:31:58.2860317Z",
     "notes":  "Built by build-release.bat",
     "artifacts":  {
                       "windows-amd64":  "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/initra-windows-amd64.exe",
@@ -9,9 +9,9 @@
                       "agent-linux-amd64":  "https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/initra-agent-linux-amd64"
                   },
     "sha256":  {
-                   "windows-amd64":  "f89a69d8e11b25662f60c92c244087254df655eac3015eb80ddb5e0b98edfc1f",
-                   "linux-amd64":  "15e635f4240083c2634036d212f2ec32cce18ab19c2849bbfe60de48b86984ac",
-                   "agent-windows-amd64":  "5f44ac19a583ca068c240f794cd164e719125b6da0113ccfe19134f59c7111b0",
-                   "agent-linux-amd64":  "bd55a7968b24b5fded7b43b6784405b0b832c5d0c13346259ccb9a2231af755b"
+                   "windows-amd64":  "133f9ad1cae4855b7e32a092fccbeb9bcb7e38e83e811218428af6fd32b27ccb",
+                   "linux-amd64":  "1b4012cae0ac686544be2532d606dd34b1ff147ef7c6fdc791c5627db9fc88fd",
+                   "agent-windows-amd64":  "1f45a7c06ba86098e7dad4da4b126b1ba9bb4155e40b4f3b65943d2b0959ceaa",
+                   "agent-linux-amd64":  "22b71bc309d8a49798c9ba3dffdfb41046ddba47c20c2b56f1c16eb59c4e56f4"
                }
 }

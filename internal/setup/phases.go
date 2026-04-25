@@ -95,6 +95,10 @@ func isMaintenanceLoopStep(step ResolvedStep) bool {
 	return step.Item.ID == "windows-update" || step.Item.ID == "driver-refresh"
 }
 
+func stepFailureCanContinue(step ResolvedStep) bool {
+	return step.Item.ContinueOnError || step.Phase == phaseApplications
+}
+
 func waitForNetwork(ctx context.Context, logger *Logger, baseURL string) error {
 	targets := []string{
 		strings.TrimRight(defaultBaseURL(baseURL), "/") + "/releases/latest.json",

@@ -24,6 +24,7 @@ const (
 	stateFileName             = "state.json"
 	defaultProfileFileName    = "profile.json"
 	restorePointDescription   = "Initra pre-change checkpoint"
+	maxWingetBootstrapReboots = 5
 )
 
 type CLIOptions struct {
