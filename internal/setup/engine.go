@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -755,18 +756,6 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	}
 	defer stopHostedSession()
 
-	if env.OS == "windows" && selectedNeedsWinget(plan) {
-		if err := ensureWinget(ctx, env, logger); err != nil {
-			report.Status = "error"
-			report.Error = err.Error()
-			report.FinishedAt = time.Now()
-			_ = saveSessionReport(reportPath, &report)
-			printFinalSessionScreen(report, interactive)
-			cleanupInterruptedSession(paths, logger)
-			return err
-		}
-	}
-
 	restoreCreated := false
 	totalRunnable := 0
 	for _, step := range plan.Steps {
@@ -805,6 +794,16 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
+		if err := ensureStepPrerequisites(ctx, state.Plan, step, env, logger); err != nil {
+			recordExecutedStepResult(&report, step, startedStep, err)
+			report.Status = "error"
+			report.Error = fmt.Sprintf("%s prerequisites: %v", step.Item.Name, err)
+			report.FinishedAt = time.Now()
+			_ = saveSessionReport(reportPath, &report)
+			printFinalSessionScreen(report, interactive)
+			cleanupInterruptedSession(paths, logger)
+			return fmt.Errorf("%s prerequisites: %w", step.Item.Name, err)
+		}
 		if err := executeStep(ctx, plan, step, env, logger, baseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
 			if step.Item.ContinueOnError {
@@ -947,6 +946,16 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		stepKey := stepStateKey(step)
 		state.Attempts[stepKey]++
 		startedStep := time.Now()
+		if err := ensureStepPrerequisites(ctx, state.Plan, step, env, logger); err != nil {
+			recordExecutedStepResult(&report, step, startedStep, err)
+			report.Status = "error"
+			report.Error = fmt.Sprintf("resume %s prerequisites: %v", step.Item.Name, err)
+			report.FinishedAt = time.Now()
+			_ = saveSessionReport(state.ReportPath, &report)
+			printFinalSessionScreen(report, interactive)
+			cleanupInterruptedSession(paths, logger)
+			return fmt.Errorf("resume %s prerequisites: %w", step.Item.Name, err)
+		}
 		if err := executeStep(ctx, state.Plan, step, env, logger, state.BaseURL, interactive); err != nil {
 			recordExecutedStepResult(&report, step, startedStep, err)
 			if step.Item.ContinueOnError {
@@ -1039,6 +1048,13 @@ func cleanupInterruptedSession(paths Paths, logger *Logger) {
 	}
 }
 
+func ensureStepPrerequisites(ctx context.Context, plan Plan, step ResolvedStep, env Environment, logger *Logger) error {
+	if env.OS != "windows" || !stepNeedsWinget(plan, step) {
+		return nil
+	}
+	return ensureWinget(ctx, env, logger)
+}
+
 func executeStep(ctx context.Context, plan Plan, step ResolvedStep, env Environment, logger *Logger, baseURL string, interactive bool) error {
 	run := func() error {
 		switch step.Method.Type {
@@ -1111,8 +1127,25 @@ func runWingetAction(ctx context.Context, env Environment, logger *Logger, id, a
 
 func selectedNeedsWinget(plan Plan) bool {
 	for _, step := range plan.Steps {
-		if step.Method.Type == "winget" || step.Item.ID == "windows-inbox-apps" {
+		if stepNeedsWinget(plan, step) {
 			return true
+		}
+	}
+	return false
+}
+
+func stepNeedsWinget(plan Plan, step ResolvedStep) bool {
+	if step.Method.Type == "winget" {
+		return true
+	}
+	if step.Item.ID == "windows-inbox-apps" {
+		return true
+	}
+	if step.Item.ID == "first-run-apps" {
+		for _, planned := range plan.Steps {
+			if planned.Method.Type == "winget" && plan.Profile.Selected[planned.Item.ID] {
+				return true
+			}
 		}
 	}
 	return false
@@ -2100,15 +2133,34 @@ func (l *Logger) Path() string {
 func runProcess(ctx context.Context, env Environment, logger *Logger, name string, args ...string) error {
 	logger.Println("run", name, strings.Join(args, " "))
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = io.MultiWriter(os.Stdout, logger.file)
-	cmd.Stderr = io.MultiWriter(os.Stderr, logger.file)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = io.MultiWriter(os.Stdout, logger.file, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, logger.file, &stderr)
 	if env.OS == "linux" && !env.IsAdmin && requiresPrivilege(name, args...) && env.HasSudo && name != "sudo" {
 		fullArgs := append([]string{name}, args...)
 		cmd = exec.CommandContext(ctx, "sudo", fullArgs...)
-		cmd.Stdout = io.MultiWriter(os.Stdout, logger.file)
-		cmd.Stderr = io.MultiWriter(os.Stderr, logger.file)
+		cmd.Stdout = io.MultiWriter(os.Stdout, logger.file, &stdout)
+		cmd.Stderr = io.MultiWriter(os.Stderr, logger.file, &stderr)
 	}
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		details := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
+		if details == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, truncateForError(details, 4000))
+	}
+	return nil
+}
+
+func truncateForError(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	if limit < 16 {
+		return value[:limit]
+	}
+	return value[:limit] + "...(truncated)"
 }
 
 func requiresPrivilege(name string, args ...string) bool {
@@ -2158,15 +2210,39 @@ func ensureWinget(ctx context.Context, env Environment, logger *Logger) error {
 	logger.Println("bootstrapping winget")
 	if !env.Windows.IsIoT {
 		_ = runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`)
-		if commandExists("winget") {
+		if ensureWingetOnPath(env) {
 			return nil
 		}
 		_ = runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `$progressPreference = 'silentlyContinue'; Install-PackageProvider -Name NuGet -Force | Out-Null; Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null; Repair-WinGetPackageManager -AllUsers`)
-		if commandExists("winget") {
+		if ensureWingetOnPath(env) {
 			return nil
 		}
 	}
 	return installWingetForIoT(ctx, env, logger)
+}
+
+func ensureWingetOnPath(env Environment) bool {
+	if commandExists("winget") {
+		return true
+	}
+	candidates := []string{
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "WindowsApps", "winget.exe"),
+		filepath.Join(env.HomeDir, "AppData", "Local", "Microsoft", "WindowsApps", "winget.exe"),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			dir := filepath.Dir(candidate)
+			pathValue := os.Getenv("PATH")
+			if !strings.Contains(strings.ToLower(pathValue), strings.ToLower(dir)) {
+				_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+pathValue)
+			}
+			return commandExists("winget")
+		}
+	}
+	return false
 }
 
 func installWingetForIoT(ctx context.Context, env Environment, logger *Logger) error {
@@ -2211,13 +2287,34 @@ func installWingetForIoT(ctx context.Context, env Environment, logger *Logger) e
 	}
 
 	script := fmt.Sprintf(`
-Add-AppxPackage -Path '%s'
-Add-AppxPackage -Path '%s'
-Add-AppxPackage -Path '%s'
-Add-AppxProvisionedPackage -Online -PackagePath '%s' -LicensePath '%s'
-`, vclibsPath, uiPath, msixPath, msixPath, licensePath)
+$ErrorActionPreference = 'Stop'
+$vclibs = '%s'
+$ui = '%s'
+$winget = '%s'
+$license = '%s'
+$dependencies = @($vclibs, $ui)
+Write-Host 'Installing WinGet dependencies for Windows LTSC/IoT...'
+foreach ($dependency in $dependencies) {
+  try {
+    Add-AppxPackage -Path $dependency -ErrorAction Stop
+  } catch {
+    Write-Host ('Dependency install reported: ' + $_.Exception.Message)
+  }
+}
+Write-Host 'Installing WinGet Desktop App Installer package...'
+try {
+  Add-AppxPackage -Path $winget -DependencyPackagePath $dependencies -ErrorAction Stop
+} catch {
+  Write-Host ('Add-AppxPackage failed: ' + $_.Exception.Message)
+}
+Write-Host 'Provisioning WinGet for the machine...'
+Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -DependencyPackagePath $dependencies -ErrorAction Stop | Out-String | Write-Host
+`, vclibsPath, uiPath, msixPath, licensePath)
 	if err := runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script); err != nil {
 		return err
+	}
+	if !ensureWingetOnPath(env) {
+		return errors.New("WinGet installation completed but winget.exe was not found in the current user WindowsApps path; a restart may be required")
 	}
 	return nil
 }
@@ -3147,8 +3244,47 @@ func enableFeatureWSL(ctx context.Context, env Environment, logger *Logger) erro
 }
 
 func unzipSingle(zipPath, containedPath, target string) error {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf(`Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip=[System.IO.Compression.ZipFile]::OpenRead('%s'); $entry=$zip.Entries | Where-Object { $_.FullName -eq '%s' }; if (-not $entry) { throw 'entry not found' }; [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '%s', $true); $zip.Dispose()`, zipPath, containedPath, target))
-	return cmd.Run()
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	normalizedWanted := strings.ToLower(strings.ReplaceAll(containedPath, "\\", "/"))
+	var match *zip.File
+	for _, file := range reader.File {
+		normalizedName := strings.ToLower(strings.ReplaceAll(file.Name, "\\", "/"))
+		if normalizedName == normalizedWanted || strings.HasSuffix(normalizedName, "/"+filepath.Base(normalizedWanted)) {
+			match = file
+			break
+		}
+	}
+	if match == nil {
+		names := make([]string, 0, min(len(reader.File), 20))
+		for idx, file := range reader.File {
+			if idx >= 20 {
+				break
+			}
+			names = append(names, file.Name)
+		}
+		return fmt.Errorf("zip entry %q not found in %s; first entries: %s", containedPath, zipPath, strings.Join(names, ", "))
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	source, err := match.Open()
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	dest, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer dest.Close()
+	_, err = io.Copy(dest, source)
+	return err
 }
 
 func runSelfUpdate(ctx context.Context, env Environment, logger *Logger, baseURL string) error {

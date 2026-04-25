@@ -25,8 +25,8 @@ func newSessionReport(plan Plan, paths Paths, logger *Logger, startedAt time.Tim
 		StartedAt:  startedAt,
 		LogPath:    logger.Path(),
 		ReportPath: reportPath,
-		Profile:    plan.Profile.clone(),
-		Plan:       plan,
+		Profile:    redactProfileForReport(plan.Profile),
+		Plan:       redactPlanForReport(plan),
 		Warnings:   uniqueStrings(plan.Warnings),
 	}
 	return report, reportPath
@@ -41,6 +41,46 @@ func saveSessionReport(path string, report *SessionReport) error {
 		report.Duration = report.FinishedAt.Sub(report.StartedAt).Round(time.Second).String()
 	}
 	return saveJSON(path, report)
+}
+
+func redactPlanForReport(plan Plan) Plan {
+	redacted := plan
+	redacted.Profile = redactProfileForReport(plan.Profile)
+	for idx := range redacted.Steps {
+		redacted.Steps[idx].Inputs = redactStringMapForReport(redacted.Steps[idx].Inputs)
+	}
+	return redacted
+}
+
+func redactProfileForReport(profile UserProfile) UserProfile {
+	redacted := profile.clone()
+	redacted.Inputs = redactStringMapForReport(profile.Inputs)
+	return redacted
+}
+
+func redactStringMapForReport(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(values))
+	for key, value := range values {
+		if isSensitiveReportKey(key) {
+			redacted[key] = "[redacted]"
+			continue
+		}
+		redacted[key] = value
+	}
+	return redacted
+}
+
+func isSensitiveReportKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, token := range []string{"password", "passwd", "token", "secret", "apikey", "api_key", "access_key", "private_key"} {
+		if strings.Contains(key, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func recordStaticStepResult(report *SessionReport, step ResolvedStep) {
@@ -129,7 +169,7 @@ func printKioskInstallScreen(env Environment, resumed bool) {
 	fmt.Println(termUI.yellow(termUI.bold("Configuration is in progress. Do not turn off or restart this computer.")))
 	fmt.Println("The workstation can become temporarily unresponsive while system updates, drivers, and applications are installed.")
 	fmt.Println("This screen will stay locked until setup finishes or a managed reboot is required.")
-	fmt.Println("Technician override: hold Esc for 3 seconds to release kiosk mode.")
+	fmt.Println("Technician override: hold Esc for 5 seconds to release kiosk mode.")
 	fmt.Println()
 	fmt.Printf("%s %s/%s\n", termUI.dim("Target:"), env.OS, env.Arch)
 	if env.OS == "windows" && env.Windows.ProductName != "" {
@@ -150,6 +190,10 @@ func printFinalSessionScreen(report SessionReport, interactive bool) {
 	title := "Initra session finished"
 	if report.Status == "error" {
 		title = "Initra session failed"
+		if interactive {
+			setHostedSessionTopmostEnabled(false)
+			setHostedSessionFinalInputMode(false)
+		}
 	} else if report.Status == "partial" {
 		title = "Initra session finished with pending work"
 	} else if report.Status == "completed_with_warnings" {

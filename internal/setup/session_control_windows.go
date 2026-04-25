@@ -185,7 +185,7 @@ func startHostedSessionController(logger *Logger) func() {
 					if escapeStarted.IsZero() {
 						escapeStarted = time.Now()
 					}
-					if time.Since(escapeStarted) >= 3*time.Second && hostedSessionTopmost.Load() {
+					if time.Since(escapeStarted) >= 5*time.Second && hostedSessionTopmost.Load() {
 						hostedSessionTopmost.Store(false)
 						kioskInputMode.Store(kioskInputDisabled)
 						allowSystemSleep()
