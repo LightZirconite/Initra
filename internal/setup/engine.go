@@ -2911,6 +2911,11 @@ func runWindowsMaintenance(ctx context.Context, env Environment, logger *Logger)
 		return nil
 	}
 
+	if pending, err := windowsRebootPending(ctx, logger); err == nil && pending {
+		fmt.Println("Windows already requires a reboot before more updates can be installed. Initra will restart and continue afterwards.")
+		return nil
+	}
+
 	var updateErr error
 	pswuAvailable := false
 	if err := ensurePSWindowsUpdate(ctx, logger); err == nil {

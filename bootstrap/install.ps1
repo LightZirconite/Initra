@@ -24,6 +24,11 @@ $ExpectedSha256 = "$($manifest.sha256.'windows-amd64')".ToLowerInvariant()
 Invoke-WebRequest -Uri $BinaryUrl -OutFile $TargetExe
 Invoke-WebRequest -Uri "$BaseUrl/releases/catalog/catalog.yaml" -OutFile $CatalogPath
 
+if (-not (Test-Path -LiteralPath $TargetExe)) {
+  throw "Downloaded Initra binary is missing after download. Microsoft Defender or another protection layer may have quarantined it. Bootstrap log: $BootstrapLog"
+}
+try { Unblock-File -LiteralPath $TargetExe -ErrorAction SilentlyContinue } catch {}
+
 if ($ExpectedSha256) {
   $actualSha256 = (Get-FileHash -LiteralPath $TargetExe -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actualSha256 -ne $ExpectedSha256) {
@@ -65,18 +70,30 @@ if (-not $isAdmin) {
   if ($waitForElevated) {
     $startArgs.Wait = $true
     $startArgs.PassThru = $true
-    $child = Start-Process @startArgs
+    try {
+      $child = Start-Process @startArgs
+    } catch {
+      throw "Failed to start Initra. Microsoft Defender or SmartScreen may have blocked the downloaded binary at $TargetExe. Details: $($_.Exception.Message)"
+    }
     try { Stop-Transcript | Out-Null } catch {}
     exit $child.ExitCode
   }
-  Start-Process @startArgs | Out-Null
+  try {
+    Start-Process @startArgs | Out-Null
+  } catch {
+    throw "Failed to start Initra. Microsoft Defender or SmartScreen may have blocked the downloaded binary at $TargetExe. Details: $($_.Exception.Message)"
+  }
   try { Stop-Transcript | Out-Null } catch {}
   exit 0
 }
 
 Push-Location $TargetDir
 try {
-  & $TargetExe @argList
+  try {
+    & $TargetExe @argList
+  } catch {
+    throw "Failed to run Initra. Microsoft Defender or SmartScreen may have blocked the downloaded binary at $TargetExe. Details: $($_.Exception.Message)"
+  }
   $exitCode = $LASTEXITCODE
 } finally {
   Pop-Location
