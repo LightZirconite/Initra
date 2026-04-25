@@ -3,6 +3,8 @@ package setup
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -718,6 +720,10 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
 		return err
 	}
+	markerRoot := filepath.Join(targetRoot, ".initra-completed")
+	if err := os.MkdirAll(markerRoot, 0o755); err != nil {
+		return err
+	}
 
 	driverZips := []string{
 		"https://steamdeck-packages.steamos.cloud/misc/windows/drivers/Aerith_Sephiroth_Windows_Driver_2309131113.zip",
@@ -748,8 +754,18 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 			return err
 		}
 		for _, match := range matches {
+			marker := steamDeckDriverMarker(markerRoot, "helper", match)
+			if markerExists(marker) {
+				logger.Println("steamdeck driver helper already attempted", match)
+				continue
+			}
 			fmt.Printf("Running Steam Deck driver helper %s\n", match)
-			if err := runProcess(ctx, env, logger, match); err != nil {
+			fmt.Println("Driver installer windows are allowed to appear above Initra. Choose restart later if offered.")
+			markSteamDeckDriverAttempt(marker, match, logger)
+			err := withWindowsFocusRelaxed(ctx, logger, func() error {
+				return runProcess(ctx, env, logger, match)
+			})
+			if err != nil {
 				logger.Println("steamdeck driver helper failed", match, err)
 			}
 		}
@@ -760,15 +776,39 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 			return err
 		}
 		for _, match := range matches {
+			marker := steamDeckDriverMarker(markerRoot, "inf", match)
+			if markerExists(marker) {
+				logger.Println("steamdeck inf already installed or attempted", match)
+				continue
+			}
 			if err := runProcess(ctx, env, logger, "pnputil", "/add-driver", match, "/install"); err != nil {
 				logger.Println("steamdeck inf install failed", match, err)
+				continue
 			}
+			markSteamDeckDriverAttempt(marker, match, logger)
 		}
 	}
 
 	fmt.Printf("Steam Deck LCD driver bundle prepared in %s\n", targetRoot)
 	fmt.Println("A reboot will likely be needed after the driver sequence.")
 	return nil
+}
+
+func steamDeckDriverMarker(root, kind, path string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(path))))
+	return filepath.Join(root, kind+"-"+hex.EncodeToString(sum[:8])+".txt")
+}
+
+func markerExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func markSteamDeckDriverAttempt(marker, target string, logger *Logger) {
+	content := fmt.Sprintf("%s\n%s\n", time.Now().Format(time.RFC3339), target)
+	if err := os.WriteFile(marker, []byte(content), 0o644); err != nil && logger != nil {
+		logger.Println("steamdeck marker write failed", marker, err)
+	}
 }
 
 func spotifyInstalled(env Environment) bool {

@@ -3145,13 +3145,8 @@ func hideSteamDeckGraphicsDriverUpdates(ctx context.Context, env Environment, lo
 	if env.OS != "windows" || !isSteamDeckDevice(env) {
 		return nil
 	}
-	if err := ensurePSWindowsUpdate(ctx, logger); err != nil {
-		return err
-	}
 	script := `
 $ErrorActionPreference = 'Stop'
-Import-Module PSWindowsUpdate -Force
-try { Add-WUServiceManager -MicrosoftUpdate -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
 $patterns = @(
   'Advanced Micro Devices',
   'AMD',
@@ -3164,25 +3159,35 @@ $patterns = @(
   'Galileo',
   'Steam Deck'
 )
-$updates = @(Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -ErrorAction SilentlyContinue)
-$targets = @($updates | Where-Object {
-  $blob = @($_.Title, $_.DriverManufacturer, $_.DriverClass, $_.DriverModel) -join ' '
+$session = New-Object -ComObject Microsoft.Update.Session
+$session.ClientApplicationID = 'Initra'
+$serviceID = '7971f918-a847-4430-9279-4a52d1efe18d'
+try {
+  $serviceManager = $session.CreateUpdateServiceManager()
+  [void]$serviceManager.AddService2($serviceID, 7, '')
+} catch {}
+$searcher = $session.CreateUpdateSearcher()
+$searcher.ServerSelection = 3
+$searcher.ServiceID = $serviceID
+$result = $searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Driver'")
+$targets = @()
+for ($i = 0; $i -lt $result.Updates.Count; $i++) {
+  $update = $result.Updates.Item($i)
+  $blob = @($update.Title, $update.DriverManufacturer, $update.DriverClass, $update.DriverModel) -join ' '
   foreach ($pattern in $patterns) {
-    if ($blob -match [regex]::Escape($pattern)) { return $true }
+    if ($blob -match [regex]::Escape($pattern)) {
+      $targets += $update
+      break
+    }
   }
-  return $false
-})
+}
 if (-not $targets -or $targets.Count -eq 0) {
   Write-Host 'No Steam Deck graphics/APU driver update is currently offered by Microsoft Update.'
   return
 }
 foreach ($update in $targets) {
   Write-Host ("Hiding Microsoft Update driver: {0}" -f $update.Title)
-  if ($update.UpdateID) {
-    Hide-WindowsUpdate -MicrosoftUpdate -UpdateID $update.UpdateID -Confirm:$false -ErrorAction Stop | Out-String | Write-Host
-  } else {
-    Hide-WindowsUpdate -MicrosoftUpdate -Title $update.Title -Confirm:$false -ErrorAction Stop | Out-String | Write-Host
-  }
+  $update.IsHidden = $true
 }
 `
 	return runWindowsPowerShellScript(ctx, logger, script)
@@ -3198,7 +3203,11 @@ if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
 Import-Module PSWindowsUpdate -Force
 Get-Command Install-WindowsUpdate | Out-Null
 `
-	return runWindowsPowerShellScript(ctx, logger, script)
+	_, err := runOutput("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	if err != nil && logger != nil {
+		logger.Println("PSWindowsUpdate unavailable", err)
+	}
+	return err
 }
 
 func restoreWindowsInboxApps(ctx context.Context, env Environment, logger *Logger) error {
