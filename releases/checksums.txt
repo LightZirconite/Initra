@@ -1,4 +1,4 @@
-initra-windows-amd64.exe        5fe95c5b96dfb6f111c9083280dce9d04dc8e581460746be704b8fe6770b5c7d
-initra-linux-amd64            95234c5e8b85ab30f1fded23550b20990071b9c71cc9e25617ba784ed978af02
-initra-agent-windows-amd64.exe  9ebd180dbb81d4a3fc673e957eeaf947b516690103a071460fe6e99eaac55500
-initra-agent-linux-amd64      555571200fa8ed88fde0e8d31731dbc566b5637fa6661ae42ba973be551c61db
+initra-windows-amd64.exe        a79c4b6b198ed0e3044ada07fd61648124cc66fd467a5faf2e391899ba11206b
+initra-linux-amd64            7bd71fbba223f03aeb51c6b10b9d9e0633bb55fd9db080d4cd5cc043fc8223db
+initra-agent-windows-amd64.exe  a2fb5fcc365b920007ef9f56ee60b11ee2c92125503dce09119a3cfe048b89ce
+initra-agent-linux-amd64      4caf6fe77220aa2195f5f1fdb5ea378cca0fff5bb65dd9fcc1a9d372bf5fd8af

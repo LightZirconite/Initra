@@ -1477,7 +1477,7 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, plan Plan,
 	case "windows_update":
 		return runWindowsMaintenance(ctx, env, logger)
 	case "driver_refresh":
-		return runDriverRefresh(ctx, env, logger)
+		return runDriverRefresh(ctx, env, logger, interactive)
 	case "steamdeck_graphics_driver_block":
 		return hideSteamDeckGraphicsDriverUpdates(ctx, env, logger)
 	case "windows_inbox_apps":
@@ -2309,12 +2309,17 @@ foreach ($dependency in $dependencies) {
 }
 Write-Host 'Installing WinGet Desktop App Installer package...'
 try {
-  Add-AppxPackage -Path $winget -DependencyPackagePath $dependencies -ErrorAction Stop
+  Add-AppxPackage -Path $winget -ErrorAction Stop
 } catch {
   Write-Host ('Add-AppxPackage failed: ' + $_.Exception.Message)
 }
 Write-Host 'Provisioning WinGet for the machine...'
-Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -DependencyPackagePath $dependencies -ErrorAction Stop | Out-String | Write-Host
+try {
+  Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -DependencyPackagePath $dependencies -ErrorAction Stop | Out-String | Write-Host
+} catch {
+  Write-Host ('Provisioning with dependency paths failed: ' + $_.Exception.Message)
+  Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -ErrorAction Stop | Out-String | Write-Host
+}
 `, vclibsPath, uiPath, msixPath, licensePath)
 	if err := runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script); err != nil {
 		return err
@@ -3085,7 +3090,7 @@ for ($i = 0; $i -lt $installable.Count; $i++) {
 	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
-func runDriverRefresh(ctx context.Context, env Environment, logger *Logger) error {
+func runDriverRefresh(ctx context.Context, env Environment, logger *Logger, interactive bool) error {
 	if env.OS == "linux" {
 		if env.Capabilities["fwupdmgr"] {
 			_ = runProcess(ctx, env, logger, "fwupdmgr", "refresh", "--force")
@@ -3095,9 +3100,6 @@ func runDriverRefresh(ctx context.Context, env Environment, logger *Logger) erro
 	}
 
 	if isSteamDeckDevice(env) {
-		if err := hideSteamDeckGraphicsDriverUpdates(ctx, env, logger); err != nil {
-			logger.Println("steam deck graphics driver update hide failed", err)
-		}
 		fmt.Println("Steam Deck hardware detected. Skipping Microsoft Update graphics driver installation to preserve Valve APU/display drivers.")
 	} else if err := ensurePSWindowsUpdate(ctx, logger); err == nil {
 		script := `
@@ -3133,7 +3135,12 @@ if ($driverUpdates) {
 			_ = runWingetAction(ctx, env, logger, "AMD.AMDSoftwareCloudEdition", stepActionInstall)
 		}
 	}
-	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger)
+	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger, interactive)
+	if isSteamDeckDevice(env) {
+		if err := hideSteamDeckGraphicsDriverUpdates(ctx, env, logger); err != nil {
+			logger.Println("steam deck graphics driver update hide failed", err)
+		}
+	}
 	_ = runProcess(ctx, env, logger, "pnputil", "/scan-devices")
 	if commandExists("winget") {
 		_ = runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
@@ -3387,9 +3394,29 @@ func unzipSingle(zipPath, containedPath, target string) error {
 	var match *zip.File
 	for _, file := range reader.File {
 		normalizedName := strings.ToLower(strings.ReplaceAll(file.Name, "\\", "/"))
-		if normalizedName == normalizedWanted || strings.HasSuffix(normalizedName, "/"+filepath.Base(normalizedWanted)) {
+		if normalizedName == normalizedWanted {
 			match = file
 			break
+		}
+	}
+	if match == nil && strings.Contains(normalizedWanted, "/x64/") {
+		wantedBase := strings.ToLower(filepath.Base(normalizedWanted))
+		for _, file := range reader.File {
+			normalizedName := strings.ToLower(strings.ReplaceAll(file.Name, "\\", "/"))
+			if strings.Contains(normalizedName, "/x64/") && strings.HasSuffix(normalizedName, "/"+wantedBase) {
+				match = file
+				break
+			}
+		}
+	}
+	if match == nil {
+		wantedBase := strings.ToLower(filepath.Base(normalizedWanted))
+		for _, file := range reader.File {
+			normalizedName := strings.ToLower(strings.ReplaceAll(file.Name, "\\", "/"))
+			if strings.HasSuffix(normalizedName, "/"+wantedBase) {
+				match = file
+				break
+			}
 		}
 	}
 	if match == nil {

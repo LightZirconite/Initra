@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -117,7 +118,42 @@ func buildProfileInteractively(catalog Catalog, env Environment, base UserProfil
 		fmt.Println()
 	}
 
+	if err := maybeExportInteractiveProfile(reader, env, profile); err != nil {
+		return profile, err
+	}
+
 	return profile, nil
+}
+
+func maybeExportInteractiveProfile(reader *bufio.Reader, env Environment, profile UserProfile) error {
+	fmt.Printf("%s\n", termUI.bold("Setup profile:"))
+	fmt.Println("  " + termUI.dim("You can save these answers and reuse them on the next run. The file may include configured tokens or passwords."))
+	saveProfile, err := promptYesNo(reader, "     Save this configuration profile?", false)
+	if err != nil {
+		return err
+	}
+	if !saveProfile {
+		fmt.Println()
+		return nil
+	}
+
+	defaultPath := filepath.Join(env.HomeDir, "Documents", "initra-profile.json")
+	if env.HomeDir == "" {
+		defaultPath = "initra-profile.json"
+	}
+	profilePath, err := promptString(reader, "     Profile file path?", defaultPath)
+	if err != nil {
+		return err
+	}
+	profilePath = strings.TrimSpace(profilePath)
+	if profilePath == "" {
+		return nil
+	}
+	if err := saveJSON(profilePath, profile); err != nil {
+		return err
+	}
+	fmt.Printf("     %s %s\n\n", termUI.green("Saved:"), profilePath)
+	return nil
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultValue bool) (bool, error) {

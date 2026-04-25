@@ -2,6 +2,7 @@ package setup
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -706,7 +707,7 @@ Write-Host 'Startup cleanup finished.'
 	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
-func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logger *Logger) error {
+func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logger *Logger, interactive bool) error {
 	if env.OS != "windows" || !isSteamDeckLCD(env) {
 		return nil
 	}
@@ -754,18 +755,7 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 			return err
 		}
 		for _, match := range matches {
-			marker := steamDeckDriverMarker(markerRoot, "helper", match)
-			if markerExists(marker) {
-				logger.Println("steamdeck driver helper already attempted", match)
-				continue
-			}
-			fmt.Printf("Running Steam Deck driver helper %s\n", match)
-			fmt.Println("Driver installer windows are allowed to appear above Initra. Choose restart later if offered.")
-			markSteamDeckDriverAttempt(marker, match, logger)
-			err := withWindowsFocusRelaxed(ctx, logger, func() error {
-				return runProcess(ctx, env, logger, match)
-			})
-			if err != nil {
+			if err := runSteamDeckDriverHelper(ctx, env, logger, markerRoot, match, interactive); err != nil {
 				logger.Println("steamdeck driver helper failed", match, err)
 			}
 		}
@@ -781,7 +771,7 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 				logger.Println("steamdeck inf already installed or attempted", match)
 				continue
 			}
-			if err := runProcess(ctx, env, logger, "pnputil", "/add-driver", match, "/install"); err != nil {
+			if err := runSteamDeckINFInstall(ctx, env, logger, match); err != nil {
 				logger.Println("steamdeck inf install failed", match, err)
 				continue
 			}
@@ -792,6 +782,59 @@ func maybeInstallSteamDeckLCDDrivers(ctx context.Context, env Environment, logge
 	fmt.Printf("Steam Deck LCD driver bundle prepared in %s\n", targetRoot)
 	fmt.Println("A reboot will likely be needed after the driver sequence.")
 	return nil
+}
+
+func runSteamDeckDriverHelper(ctx context.Context, env Environment, logger *Logger, markerRoot, match string, interactive bool) error {
+	marker := steamDeckDriverMarker(markerRoot, "helper", match)
+	if markerExists(marker) {
+		logger.Println("steamdeck driver helper already attempted", match)
+		return nil
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("Running Steam Deck driver helper %s\n", match)
+		fmt.Println("Driver installer windows are allowed to appear above Initra. Choose restart later if offered.")
+		markSteamDeckDriverAttempt(marker, match, logger)
+		err := withWindowsFocusRelaxed(ctx, logger, func() error {
+			return runProcess(ctx, env, logger, match)
+		})
+		if err != nil {
+			logger.Println("steamdeck driver helper failed", match, err)
+		}
+		if !interactive {
+			return err
+		}
+		relaunch, askErr := promptYesNo(reader, "     Relaunch this Steam Deck driver helper?", false)
+		if askErr != nil {
+			return askErr
+		}
+		if !relaunch {
+			return err
+		}
+	}
+}
+
+func runSteamDeckINFInstall(ctx context.Context, env Environment, logger *Logger, match string) error {
+	err := runProcess(ctx, env, logger, "pnputil", "/add-driver", match, "/install")
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(err.Error())
+	acceptable := []string{
+		"exit status 259",
+		"already exists",
+		"already installed",
+		"up-to-date",
+		"up to date",
+		"no more data is available",
+	}
+	for _, needle := range acceptable {
+		if strings.Contains(message, needle) {
+			logger.Println("steamdeck inf install reported a non-fatal already-present state", match, err)
+			return nil
+		}
+	}
+	return err
 }
 
 func steamDeckDriverMarker(root, kind, path string) string {
