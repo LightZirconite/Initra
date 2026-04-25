@@ -2939,16 +2939,19 @@ Get-WUHistory | Select-Object -First 10 Date, Title, Result | Format-Table -Auto
 	}
 
 	if !pswuAvailable || updateErr != nil {
-		script := `
+		if err := runWindowsUpdateAgentMaintenance(ctx, logger); err != nil {
+			logger.Println("windows update agent maintenance failed, falling back to settings scan", err)
+			script := `
 try { UsoClient StartInteractiveScan } catch {}
 try { UsoClient StartScan } catch {}
 try { UsoClient StartDownload } catch {}
 try { UsoClient StartInstall } catch {}
 `
-		if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
-			return err
+			if err := runWindowsPowerShellScript(ctx, logger, script); err != nil {
+				return err
+			}
+			_ = runWindowsSettingsURI(ctx, logger, "ms-settings:windowsupdate")
 		}
-		_ = runWindowsSettingsURI(ctx, logger, "ms-settings:windowsupdate")
 	}
 	if commandExists("winget") {
 		if err := runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {
@@ -2956,6 +2959,71 @@ try { UsoClient StartInstall } catch {}
 		}
 	}
 	return nil
+}
+
+func runWindowsUpdateAgentMaintenance(ctx context.Context, logger *Logger) error {
+	script := `
+$ErrorActionPreference = 'Stop'
+Write-Host 'Using Windows Update Agent API for software updates.'
+$session = New-Object -ComObject Microsoft.Update.Session
+$session.ClientApplicationID = 'Initra'
+$searcher = $session.CreateUpdateSearcher()
+$criteria = "IsInstalled=0 and IsHidden=0 and Type='Software'"
+Write-Host ('Searching Windows Update with criteria: ' + $criteria)
+$result = $searcher.Search($criteria)
+Write-Host ('Found {0} software update(s).' -f $result.Updates.Count)
+if ($result.Updates.Count -eq 0) {
+  return
+}
+
+$updates = New-Object -ComObject Microsoft.Update.UpdateColl
+for ($i = 0; $i -lt $result.Updates.Count; $i++) {
+  $update = $result.Updates.Item($i)
+  if (-not $update.EulaAccepted) {
+    $update.AcceptEula()
+  }
+  [void]$updates.Add($update)
+  Write-Host ('Queued: {0}' -f $update.Title)
+}
+
+$downloader = $session.CreateUpdateDownloader()
+$downloader.Updates = $updates
+Write-Host 'Downloading queued updates...'
+$downloadResult = $downloader.Download()
+Write-Host ('Download result code: {0}' -f $downloadResult.ResultCode)
+for ($i = 0; $i -lt $updates.Count; $i++) {
+  $itemResult = $downloadResult.GetUpdateResult($i)
+  Write-Host ('Download [{0}] {1}: {2}' -f ($i + 1), $updates.Item($i).Title, $itemResult.ResultCode)
+}
+if ($downloadResult.ResultCode -gt 3) {
+  throw ('Windows Update download failed with result code ' + $downloadResult.ResultCode)
+}
+
+$installable = New-Object -ComObject Microsoft.Update.UpdateColl
+for ($i = 0; $i -lt $updates.Count; $i++) {
+  if ($updates.Item($i).IsDownloaded) {
+    [void]$installable.Add($updates.Item($i))
+  }
+}
+if ($installable.Count -eq 0) {
+  throw 'Windows Update downloaded no installable updates.'
+}
+
+$installer = $session.CreateUpdateInstaller()
+$installer.Updates = $installable
+Write-Host 'Installing queued updates...'
+$installResult = $installer.Install()
+Write-Host ('Install result code: {0}' -f $installResult.ResultCode)
+Write-Host ('Reboot required: {0}' -f $installResult.RebootRequired)
+for ($i = 0; $i -lt $installable.Count; $i++) {
+  $itemResult = $installResult.GetUpdateResult($i)
+  Write-Host ('Install [{0}] {1}: {2} / HRESULT {3}' -f ($i + 1), $installable.Item($i).Title, $itemResult.ResultCode, ('0x{0:X8}' -f $itemResult.HResult))
+}
+if ($installResult.ResultCode -gt 3) {
+  throw ('Windows Update install failed with result code ' + $installResult.ResultCode)
+}
+`
+	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
 func runDriverRefresh(ctx context.Context, env Environment, logger *Logger) error {
@@ -2969,7 +3037,7 @@ func runDriverRefresh(ctx context.Context, env Environment, logger *Logger) erro
 
 	if isSteamDeckDevice(env) {
 		if err := hideSteamDeckGraphicsDriverUpdates(ctx, env, logger); err != nil {
-			return err
+			logger.Println("steam deck graphics driver update hide failed", err)
 		}
 		fmt.Println("Steam Deck hardware detected. Skipping Microsoft Update graphics driver installation to preserve Valve APU/display drivers.")
 	} else if err := ensurePSWindowsUpdate(ctx, logger); err == nil {
@@ -3065,11 +3133,8 @@ func ensurePSWindowsUpdate(ctx context.Context, logger *Logger) error {
 	script := `
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
-  Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
-}
 if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
-  Install-Module -Name PSWindowsUpdate -Force -AllowClobber -Scope AllUsers -Repository PSGallery
+  throw 'PSWindowsUpdate is not installed.'
 }
 Import-Module PSWindowsUpdate -Force
 Get-Command Install-WindowsUpdate | Out-Null
