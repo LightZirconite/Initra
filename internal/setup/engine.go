@@ -2278,6 +2278,10 @@ func installWingetForIoT(ctx context.Context, env Environment, logger *Logger) e
 	if err := downloadFile(ctx, "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx", vclibsPath); err != nil {
 		return err
 	}
+	appRuntimePath := filepath.Join(tempDir, "WindowsAppRuntimeInstall-x64.exe")
+	if err := downloadFile(ctx, "https://aka.ms/windowsappsdk/1.8/1.8.260416003/windowsappruntimeinstall-x64.exe", appRuntimePath); err != nil {
+		return err
+	}
 
 	uiPath, err := fetchLatestUIXamlAppx(ctx, tempDir)
 	if err != nil {
@@ -2298,6 +2302,7 @@ $vclibs = '%s'
 $ui = '%s'
 $winget = '%s'
 $license = '%s'
+$appRuntime = '%s'
 $dependencies = @($vclibs, $ui)
 Write-Host 'Installing WinGet dependencies for Windows LTSC/IoT...'
 foreach ($dependency in $dependencies) {
@@ -2306,6 +2311,11 @@ foreach ($dependency in $dependencies) {
   } catch {
     Write-Host ('Dependency install reported: ' + $_.Exception.Message)
   }
+}
+Write-Host 'Installing Windows App SDK Runtime 1.8 for Desktop App Installer...'
+& $appRuntime --quiet --norestart
+if (($LASTEXITCODE -ne 0) -and ($LASTEXITCODE -ne 3010)) {
+  throw ('Windows App SDK Runtime installer failed with exit code ' + $LASTEXITCODE)
 }
 Write-Host 'Installing WinGet Desktop App Installer package...'
 try {
@@ -2320,7 +2330,7 @@ try {
   Write-Host ('Provisioning with dependency paths failed: ' + $_.Exception.Message)
   Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -ErrorAction Stop | Out-String | Write-Host
 }
-`, vclibsPath, uiPath, msixPath, licensePath)
+`, vclibsPath, uiPath, msixPath, licensePath, appRuntimePath)
 	if err := runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script); err != nil {
 		return err
 	}
