@@ -735,9 +735,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
-	if err := setupResumeHook(paths, logger); err != nil {
-		return err
-	}
+	_ = removeResumeHook(paths)
 	if err := saveSessionReport(reportPath, &report); err != nil {
 		return err
 	}
@@ -746,6 +744,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		report.Error = err.Error()
 		report.FinishedAt = time.Now()
 		_ = saveSessionReport(reportPath, &report)
+		cleanupInterruptedSession(paths, logger)
 		return err
 	}
 	stopHostedSession := func() {}
@@ -763,6 +762,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(reportPath, &report)
 			printFinalSessionScreen(report, interactive)
+			cleanupInterruptedSession(paths, logger)
 			return err
 		}
 	}
@@ -828,6 +828,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(reportPath, &report)
 			printFinalSessionScreen(report, interactive)
+			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("%s: %w", step.Item.Name, err)
 		}
 		recordExecutedStepResult(&report, step, startedStep, nil)
@@ -905,9 +906,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		state.Attempts = map[string]int{}
 	}
 	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
-		return err
-	}
-	if err := setupResumeHook(paths, logger); err != nil {
+		cleanupInterruptedSession(paths, logger)
 		return err
 	}
 	report := SessionReport{}
@@ -971,6 +970,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(state.ReportPath, &report)
 			printFinalSessionScreen(report, interactive)
+			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("resume %s: %w", step.Item.Name, err)
 		}
 		recordExecutedStepResult(&report, step, startedStep, nil)
@@ -1028,6 +1028,15 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	}
 	printFinalSessionScreen(report, interactive)
 	return nil
+}
+
+func cleanupInterruptedSession(paths Paths, logger *Logger) {
+	if err := removeResumeHook(paths); err != nil && logger != nil {
+		logger.Println("remove resume hook after interrupted session failed", err)
+	}
+	if err := os.Remove(paths.StatePath); err != nil && !isMissing(err) && logger != nil {
+		logger.Println("remove interrupted session state failed", err)
+	}
 }
 
 func executeStep(ctx context.Context, plan Plan, step ResolvedStep, env Environment, logger *Logger, baseURL string, interactive bool) error {

@@ -53,19 +53,25 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
+  $waitForElevated = @("1", "true", "yes") -contains "$env:INITRA_WAIT_ELEVATED".ToLowerInvariant()
   $startArgs = @{
     FilePath = $TargetExe
     Verb = "RunAs"
     WorkingDirectory = $TargetDir
-    Wait = $true
-    PassThru = $true
   }
   if ($CliArgs.Count -gt 0) {
     $startArgs.ArgumentList = Join-ProcessArguments $argList
   }
-  $child = Start-Process @startArgs
+  if ($waitForElevated) {
+    $startArgs.Wait = $true
+    $startArgs.PassThru = $true
+    $child = Start-Process @startArgs
+    try { Stop-Transcript | Out-Null } catch {}
+    exit $child.ExitCode
+  }
+  Start-Process @startArgs | Out-Null
   try { Stop-Transcript | Out-Null } catch {}
-  exit $child.ExitCode
+  exit 0
 }
 
 Push-Location $TargetDir
