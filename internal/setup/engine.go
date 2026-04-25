@@ -184,7 +184,7 @@ func buildPlan(catalog Catalog, env Environment, profile UserProfile, logger *Lo
 		if len(item.DependsOn) > 0 && !profileDependencySatisfied(item, profile) {
 			continue
 		}
-		if !item.AutoApply && !profile.Selected[item.ID] {
+		if !item.AutoApply && !profile.Selected[item.ID] && !itemForcedByEnvironment(item, env) {
 			continue
 		}
 		step, warnings, err := resolveStep(item, env, profile, logger)
@@ -201,6 +201,10 @@ func buildPlan(catalog Catalog, env Environment, profile UserProfile, logger *Lo
 	sortPlanByPhase(&plan)
 
 	return plan, nil
+}
+
+func itemForcedByEnvironment(item Item, env Environment) bool {
+	return item.ID == "steamdeck-graphics-driver-block" && isSteamDeckDevice(env)
 }
 
 func resolveStep(item Item, env Environment, profile UserProfile, logger *Logger) (ResolvedStep, []string, error) {
@@ -1426,6 +1430,8 @@ func runBuiltin(ctx context.Context, env Environment, logger *Logger, plan Plan,
 		return runWindowsMaintenance(ctx, env, logger)
 	case "driver_refresh":
 		return runDriverRefresh(ctx, env, logger)
+	case "steamdeck_graphics_driver_block":
+		return hideSteamDeckGraphicsDriverUpdates(ctx, env, logger)
 	case "windows_inbox_apps":
 		return restoreWindowsInboxApps(ctx, env, logger)
 	case "initra_agent":
@@ -2855,7 +2861,12 @@ func runDriverRefresh(ctx context.Context, env Environment, logger *Logger) erro
 		return nil
 	}
 
-	if err := ensurePSWindowsUpdate(ctx, logger); err == nil {
+	if isSteamDeckDevice(env) {
+		if err := hideSteamDeckGraphicsDriverUpdates(ctx, env, logger); err != nil {
+			return err
+		}
+		fmt.Println("Steam Deck hardware detected. Skipping Microsoft Update graphics driver installation to preserve Valve APU/display drivers.")
+	} else if err := ensurePSWindowsUpdate(ctx, logger); err == nil {
 		script := `
 $ErrorActionPreference = 'Stop'
 Import-Module PSWindowsUpdate -Force
@@ -2873,19 +2884,21 @@ if ($driverUpdates) {
 		}
 	}
 
-	switch {
-	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "dell"):
-		_ = runWingetAction(ctx, env, logger, "Dell.CommandUpdate.Universal", stepActionInstall)
-	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "lenovo"):
-		_ = runWingetAction(ctx, env, logger, "Lenovo.SystemUpdate", stepActionInstall)
-	case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "hp"):
-		_ = runWingetAction(ctx, env, logger, "HPInc.HPSupportAssistant", stepActionInstall)
-	}
-	if strings.Contains(strings.ToLower(env.Windows.CPUVendor), "intel") || strings.Contains(strings.ToLower(env.Windows.GPUVendor), "intel") {
-		_ = runWingetAction(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant", stepActionInstall)
-	}
-	if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "amd") {
-		_ = runWingetAction(ctx, env, logger, "AMD.AMDSoftwareCloudEdition", stepActionInstall)
+	if !isSteamDeckDevice(env) {
+		switch {
+		case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "dell"):
+			_ = runWingetAction(ctx, env, logger, "Dell.CommandUpdate.Universal", stepActionInstall)
+		case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "lenovo"):
+			_ = runWingetAction(ctx, env, logger, "Lenovo.SystemUpdate", stepActionInstall)
+		case strings.Contains(strings.ToLower(env.Windows.Manufacturer), "hp"):
+			_ = runWingetAction(ctx, env, logger, "HPInc.HPSupportAssistant", stepActionInstall)
+		}
+		if strings.Contains(strings.ToLower(env.Windows.CPUVendor), "intel") || strings.Contains(strings.ToLower(env.Windows.GPUVendor), "intel") {
+			_ = runWingetAction(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant", stepActionInstall)
+		}
+		if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "amd") {
+			_ = runWingetAction(ctx, env, logger, "AMD.AMDSoftwareCloudEdition", stepActionInstall)
+		}
 	}
 	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger)
 	_ = runProcess(ctx, env, logger, "pnputil", "/scan-devices")
@@ -2893,6 +2906,53 @@ if ($driverUpdates) {
 		_ = runProcess(ctx, env, logger, "winget", "upgrade", "--all", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
 	}
 	return nil
+}
+
+func hideSteamDeckGraphicsDriverUpdates(ctx context.Context, env Environment, logger *Logger) error {
+	if env.OS != "windows" || !isSteamDeckDevice(env) {
+		return nil
+	}
+	if err := ensurePSWindowsUpdate(ctx, logger); err != nil {
+		return err
+	}
+	script := `
+$ErrorActionPreference = 'Stop'
+Import-Module PSWindowsUpdate -Force
+try { Add-WUServiceManager -MicrosoftUpdate -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
+$patterns = @(
+  'Advanced Micro Devices',
+  'AMD',
+  'Display',
+  'Graphics',
+  'Radeon',
+  'APU',
+  'Aerith',
+  'Sephiroth',
+  'Galileo',
+  'Steam Deck'
+)
+$updates = @(Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -ErrorAction SilentlyContinue)
+$targets = @($updates | Where-Object {
+  $blob = @($_.Title, $_.DriverManufacturer, $_.DriverClass, $_.DriverModel) -join ' '
+  foreach ($pattern in $patterns) {
+    if ($blob -match [regex]::Escape($pattern)) { return $true }
+  }
+  return $false
+})
+if (-not $targets -or $targets.Count -eq 0) {
+  Write-Host 'No Steam Deck graphics/APU driver update is currently offered by Microsoft Update.'
+  return
+}
+foreach ($update in $targets) {
+  Write-Host ("Hiding Microsoft Update driver: {0}" -f $update.Title)
+  if ($update.UpdateID) {
+    Hide-WindowsUpdate -MicrosoftUpdate -UpdateID $update.UpdateID -Confirm:$false -ErrorAction Stop | Out-String | Write-Host
+  } else {
+    Hide-WindowsUpdate -MicrosoftUpdate -Title $update.Title -Confirm:$false -ErrorAction Stop | Out-String | Write-Host
+  }
+}
+`
+	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
 func ensurePSWindowsUpdate(ctx context.Context, logger *Logger) error {

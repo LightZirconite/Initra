@@ -294,6 +294,45 @@ func TestBuildPlanDoesNotIncludeUnselectedProtonVPN(t *testing.T) {
 	}
 }
 
+func TestBuildPlanForcesGraphicsDriverBlockOnSteamDeck(t *testing.T) {
+	catalog := Catalog{
+		Categories: []Category{{ID: "maintenance", Name: "Maintenance"}},
+		Items: []Item{
+			{
+				ID:          "steamdeck-graphics-driver-block",
+				Name:        "Block Steam Deck Graphics Driver Updates",
+				Category:    "maintenance",
+				Platforms:   []string{"windows"},
+				Description: "Prevent Windows Update from replacing Valve graphics drivers",
+				Install: map[string]InstallSpec{
+					"windows": {Methods: []Method{{Type: "builtin", Action: "steamdeck_graphics_driver_block"}}},
+				},
+			},
+		},
+	}
+	catalog.index()
+	env := Environment{OS: "windows", Windows: WindowsInfo{Manufacturer: "Valve", Model: "Jupiter"}}
+	profile := newProfile("generic")
+
+	plan, err := buildPlan(catalog, env, profile, &Logger{})
+	if err != nil {
+		t.Fatalf("buildPlan() error = %v", err)
+	}
+	if len(plan.Steps) != 1 {
+		t.Fatalf("expected forced graphics driver block step, got %d", len(plan.Steps))
+	}
+}
+
+func TestSteamDeckDetectionIncludesOLEDCodename(t *testing.T) {
+	env := Environment{OS: "windows", Windows: WindowsInfo{Manufacturer: "Valve", Model: "Galileo"}}
+	if !isSteamDeckDevice(env) {
+		t.Fatalf("expected Galileo model to be detected as Steam Deck hardware")
+	}
+	if isSteamDeckLCD(env) {
+		t.Fatalf("did not expect Galileo model to be treated as LCD driver target")
+	}
+}
+
 func TestParseWingetQueryDetected(t *testing.T) {
 	output := `
 Name          Id                 Version Available Source

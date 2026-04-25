@@ -1099,6 +1099,21 @@ items:
           - type: builtin
             action: driver_refresh
 
+  - id: steamdeck-graphics-driver-block
+    name: Block Steam Deck Graphics Driver Updates
+    category: maintenance
+    description: Hides Microsoft Update graphics/APU driver offers that can replace Valve's Steam Deck driver.
+    platforms: [windows]
+    requires_admin: true
+    notes:
+      - "This does not disable Windows security/cumulative updates."
+      - "On Steam Deck hardware, Initra applies this automatically before driver refresh so Valve's APU/display driver remains authoritative."
+    install:
+      windows:
+        methods:
+          - type: builtin
+            action: steamdeck_graphics_driver_block
+
   - id: windows-inbox-apps
     name: Restore Windows Inbox Apps
     category: maintenance

@@ -1018,9 +1018,13 @@ func findFilesRecursive(root, name string) ([]string, error) {
 }
 
 func isSteamDeckLCD(env Environment) bool {
+	return isSteamDeckDevice(env) && !strings.Contains(strings.ToLower(env.Windows.Model), "galileo")
+}
+
+func isSteamDeckDevice(env Environment) bool {
 	manufacturer := strings.ToLower(env.Windows.Manufacturer)
 	model := strings.ToLower(env.Windows.Model)
-	return strings.Contains(manufacturer, "valve") || strings.Contains(model, "steam deck") || strings.Contains(model, "jupiter")
+	return strings.Contains(manufacturer, "valve") || strings.Contains(model, "steam deck") || strings.Contains(model, "jupiter") || strings.Contains(model, "galileo")
 }
 
 func createWindowsShortcut(shortcutPath, targetPath string) error {

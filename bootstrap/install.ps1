@@ -14,6 +14,8 @@ $TargetExe = Join-Path $TargetDir "initra.exe"
 $CatalogPath = Join-Path $CatalogDir "catalog.yaml"
 New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
 New-Item -ItemType Directory -Force -Path $CatalogDir | Out-Null
+$BootstrapLog = Join-Path $TargetDir "bootstrap.log"
+try { Start-Transcript -LiteralPath $BootstrapLog -Append | Out-Null } catch {}
 
 $manifest = Invoke-RestMethod -Uri $ManifestUrl
 $BinaryUrl = if ($manifest.artifacts.'windows-amd64') { $manifest.artifacts.'windows-amd64' } else { "$BaseUrl/releases/initra-windows-amd64.exe" }
@@ -35,16 +37,43 @@ if ($CliArgs.Count -gt 0) {
   $argList += $CliArgs
 }
 
+function Join-ProcessArguments([string[]]$Args) {
+  $quoted = @()
+  foreach ($arg in $Args) {
+    if ($arg -match '[\s"]') {
+      $quoted += '"' + ($arg -replace '"', '\"') + '"'
+    } else {
+      $quoted += $arg
+    }
+  }
+  return ($quoted -join ' ')
+}
+
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-  if ($CliArgs.Count -gt 0) {
-    Start-Process -FilePath $TargetExe -Verb RunAs -ArgumentList $argList | Out-Null
-  } else {
-    Start-Process -FilePath $TargetExe -Verb RunAs | Out-Null
+  $startArgs = @{
+    FilePath = $TargetExe
+    Verb = "RunAs"
+    WorkingDirectory = $TargetDir
+    Wait = $true
+    PassThru = $true
   }
-  exit 0
+  if ($CliArgs.Count -gt 0) {
+    $startArgs.ArgumentList = Join-ProcessArguments $argList
+  }
+  $child = Start-Process @startArgs
+  try { Stop-Transcript | Out-Null } catch {}
+  exit $child.ExitCode
 }
 
-& $TargetExe @argList
+Push-Location $TargetDir
+try {
+  & $TargetExe @argList
+  $exitCode = $LASTEXITCODE
+} finally {
+  Pop-Location
+  try { Stop-Transcript | Out-Null } catch {}
+}
+exit $exitCode
