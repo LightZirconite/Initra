@@ -169,7 +169,7 @@ func printKioskInstallScreen(env Environment, resumed bool) {
 	fmt.Println(termUI.yellow(termUI.bold("Configuration is in progress. Do not turn off or restart this computer.")))
 	fmt.Println("The workstation can become temporarily unresponsive while system updates, drivers, and applications are installed.")
 	fmt.Println("This screen will stay locked until setup finishes or a managed reboot is required.")
-	fmt.Println("Technician override: hold Esc for 5 seconds to release kiosk mode.")
+	fmt.Println("Technician override: hold Ctrl+Alt+F12 for 5 seconds to release kiosk mode.")
 	fmt.Println()
 	fmt.Printf("%s %s/%s\n", termUI.dim("Target:"), env.OS, env.Arch)
 	if env.OS == "windows" && env.Windows.ProductName != "" {

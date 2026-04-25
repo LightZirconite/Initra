@@ -78,6 +78,7 @@ const (
 	vkReturn                 = 0x0D
 	vkDelete                 = 0x2E
 	vkF4                     = 0x73
+	vkF12                    = 0x7B
 	monitorDefaultToNearest  = 0x00000002
 	swpNoMove                = 0x0002
 	swpNoSize                = 0x0001
@@ -176,27 +177,27 @@ func startHostedSessionController(logger *Logger) func() {
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
-		var escapeStarted time.Time
+		var overrideStarted time.Time
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
-				if isEscapePressed() {
-					if escapeStarted.IsZero() {
-						escapeStarted = time.Now()
+				if isTechnicianOverridePressed() {
+					if overrideStarted.IsZero() {
+						overrideStarted = time.Now()
 					}
-					if time.Since(escapeStarted) >= 5*time.Second && hostedSessionTopmost.Load() {
+					if time.Since(overrideStarted) >= 5*time.Second && hostedSessionTopmost.Load() {
 						hostedSessionTopmost.Store(false)
 						kioskInputMode.Store(kioskInputDisabled)
 						allowSystemSleep()
 						_ = applyConsoleFocusMode(false)
 						beepHostedSession()
 						fmt.Println("\nInitra kiosk mode has been disabled by technician override.")
-						logger.Println("kiosk mode disabled via escape hold")
+						logger.Println("kiosk mode disabled via technician override")
 					}
 				} else {
-					escapeStarted = time.Time{}
+					overrideStarted = time.Time{}
 				}
 				if hostedSessionTopmost.Load() && kioskInputMode.Load() != kioskInputHelper {
 					_ = enforceConsoleFocus()
@@ -518,9 +519,9 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object {
 	return runWindowsPowerShellScript(ctx, logger, script)
 }
 
-func isEscapePressed() bool {
-	value, _, _ := procGetAsyncKeyState.Call(vkEscape)
-	return value&0x8000 != 0
+func isTechnicianOverridePressed() bool {
+	value, _, _ := procGetAsyncKeyState.Call(vkF12)
+	return value&0x8000 != 0 && ctrlPressed.Load() && altPressed.Load()
 }
 
 func beepHostedSession() {

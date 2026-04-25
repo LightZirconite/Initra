@@ -736,16 +736,10 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 	if err := saveJSON(paths.StatePath, state); err != nil {
 		return err
 	}
-	_ = removeResumeHook(paths)
-	if err := saveSessionReport(reportPath, &report); err != nil {
+	if err := setupResumeHook(paths, logger); err != nil {
 		return err
 	}
-	if err := waitForNetwork(ctx, logger, baseURL); err != nil {
-		report.Status = "error"
-		report.Error = err.Error()
-		report.FinishedAt = time.Now()
-		_ = saveSessionReport(reportPath, &report)
-		cleanupInterruptedSession(paths, logger)
+	if err := saveSessionReport(reportPath, &report); err != nil {
 		return err
 	}
 	stopHostedSession := func() {}
@@ -755,6 +749,15 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		printKioskInstallScreen(env, false)
 	}
 	defer stopHostedSession()
+
+	if err := waitForNetwork(ctx, logger, baseURL); err != nil {
+		report.Status = "error"
+		report.Error = err.Error()
+		report.FinishedAt = time.Now()
+		_ = saveSessionReport(reportPath, &report)
+		cleanupInterruptedSession(paths, logger)
+		return err
+	}
 
 	restoreCreated := false
 	totalRunnable := 0
@@ -904,16 +907,15 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	if state.Attempts == nil {
 		state.Attempts = map[string]int{}
 	}
-	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
-		cleanupInterruptedSession(paths, logger)
-		return err
-	}
 	report := SessionReport{}
 	if state.ReportPath != "" {
 		_ = loadJSON(state.ReportPath, &report)
 	}
 	if report.ReportPath == "" {
 		report, state.ReportPath = newSessionReport(state.Plan, paths, logger, state.StartedAt)
+	}
+	if err := setupResumeHook(paths, logger); err != nil {
+		return err
 	}
 	stopHostedSession := func() {}
 	if interactive {
@@ -922,6 +924,10 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 		printKioskInstallScreen(env, true)
 	}
 	defer stopHostedSession()
+	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
+		cleanupInterruptedSession(paths, logger)
+		return err
+	}
 	currentPhase := ""
 	for idx := state.NextStep; idx < len(state.Plan.Steps); idx++ {
 		step := state.Plan.Steps[idx]
@@ -2371,9 +2377,22 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 	}
 	if runtime.GOOS == "windows" {
 		taskName := appName + " Resume"
-		taskRun := fmt.Sprintf(`"%s" --resume --state-path "%s"`, binary, paths.StatePath)
 		logger.Println("installing windows resume task", taskName)
-		return exec.Command("schtasks", "/create", "/f", "/sc", "ONLOGON", "/rl", "HIGHEST", "/tn", taskName, "/tr", taskRun).Run()
+		script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$taskName = %s
+$exe = %s
+$statePath = %s
+$arguments = '--resume --state-path "' + $statePath + '"'
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action = New-ScheduledTaskAction -Execute $exe -Argument $arguments -WorkingDirectory (Split-Path -Parent $exe)
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+`, psSingleQuoted(taskName), psSingleQuoted(binary), psSingleQuoted(paths.StatePath))
+		_, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+		return err
 	}
 	if paths.ResumeAutostart == "" {
 		return nil
@@ -2388,7 +2407,9 @@ func setupResumeHook(paths Paths, logger *Logger) error {
 func removeResumeHook(paths Paths) error {
 	if runtime.GOOS == "windows" {
 		taskName := appName + " Resume"
-		return exec.Command("schtasks", "/delete", "/f", "/tn", taskName).Run()
+		script := fmt.Sprintf(`Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue`, psSingleQuoted(taskName))
+		_, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+		return err
 	}
 	if paths.ResumeAutostart == "" {
 		return nil
