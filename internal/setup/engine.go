@@ -2313,9 +2313,16 @@ foreach ($dependency in $dependencies) {
   }
 }
 Write-Host 'Installing Windows App SDK Runtime 1.8 for Desktop App Installer...'
-& $appRuntime --quiet --norestart
-if (($LASTEXITCODE -ne 0) -and ($LASTEXITCODE -ne 3010)) {
-  throw ('Windows App SDK Runtime installer failed with exit code ' + $LASTEXITCODE)
+& $appRuntime --quiet --force
+$appRuntimeExit = $LASTEXITCODE
+if (($appRuntimeExit -ne 0) -and ($appRuntimeExit -ne 3010)) {
+  $installedAppRuntime = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'Microsoft.WindowsAppRuntime.1.8*' -or $_.Name -like 'MicrosoftCorporationII.WinAppRuntime.*.1.8*' }
+  if ($installedAppRuntime) {
+    Write-Host ('Windows App SDK Runtime installer reported exit code ' + $appRuntimeExit + ', but App Runtime 1.8 is already present.')
+  } else {
+    throw ('Windows App SDK Runtime installer failed with exit code ' + $appRuntimeExit)
+  }
 }
 Write-Host 'Installing WinGet Desktop App Installer package...'
 try {
