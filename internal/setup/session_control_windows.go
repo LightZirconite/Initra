@@ -169,6 +169,7 @@ func startHostedSessionController(logger *Logger) func() {
 	enablePerMonitorDPIAwareness(logger)
 	preventSystemSleep(logger)
 	_ = applyConsoleFocusMode(true)
+	restoreNotifications := suppressWindowsNotifications(logger)
 	stopKeyboardGuard := startKeyboardGuard(logger)
 	stopMouseGuard := startMouseGuard(logger)
 	done := make(chan struct{})
@@ -210,6 +211,7 @@ func startHostedSessionController(logger *Logger) func() {
 		hostedSessionTopmost.Store(false)
 		kioskInputMode.Store(kioskInputDisabled)
 		allowSystemSleep()
+		restoreNotifications()
 		_ = applyConsoleFocusMode(false)
 	}
 }
@@ -390,6 +392,37 @@ func withWindowsFocusRelaxed(ctx context.Context, logger *Logger, fn func() erro
 		logger.Println("kiosk focus restored after helper window")
 	}()
 	return fn()
+}
+
+func suppressWindowsNotifications(logger *Logger) func() {
+	const path = `HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings`
+	const name = "NOC_GLOBAL_SETTING_TOASTS_ENABLED"
+	query := fmt.Sprintf(`$path=%q; $name=%q; $value=(Get-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue).$name; if ($null -eq $value) { '__missing__' } else { [string]$value }`, path, name)
+	previous, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", query)
+	if err != nil {
+		if logger != nil {
+			logger.Println("notification suppression state read failed", err)
+		}
+		previous = "__unknown__"
+	}
+	disable := fmt.Sprintf(`$path=%q; $name=%q; if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }; New-ItemProperty -Path $path -Name $name -Value 0 -PropertyType DWord -Force | Out-Null`, path, name)
+	if _, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", disable); err != nil && logger != nil {
+		logger.Println("notification suppression failed", err)
+	}
+	return func() {
+		var restore string
+		switch strings.TrimSpace(previous) {
+		case "__missing__":
+			restore = fmt.Sprintf(`$path=%q; $name=%q; Remove-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue`, path, name)
+		case "__unknown__":
+			return
+		default:
+			restore = fmt.Sprintf(`$path=%q; $name=%q; if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }; New-ItemProperty -Path $path -Name $name -Value %s -PropertyType DWord -Force | Out-Null`, path, name, strings.TrimSpace(previous))
+		}
+		if _, err := runOutput("powershell", "-NoProfile", "-NonInteractive", "-Command", restore); err != nil && logger != nil {
+			logger.Println("notification suppression restore failed", err)
+		}
+	}
 }
 
 func applyConsoleGuardMode() error {

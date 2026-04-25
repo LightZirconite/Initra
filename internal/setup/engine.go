@@ -2965,9 +2965,26 @@ func runWindowsUpdateAgentMaintenance(ctx context.Context, logger *Logger) error
 	script := `
 $ErrorActionPreference = 'Stop'
 Write-Host 'Using Windows Update Agent API for software updates.'
+function Test-InitraPendingReboot {
+  if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
+  if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
+  $sessionManager = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue
+  if ($sessionManager -and $sessionManager.PendingFileRenameOperations) { return $true }
+  return $false
+}
 $session = New-Object -ComObject Microsoft.Update.Session
 $session.ClientApplicationID = 'Initra'
+$serviceID = '7971f918-a847-4430-9279-4a52d1efe18d'
+try {
+  $serviceManager = $session.CreateUpdateServiceManager()
+  $service = $serviceManager.AddService2($serviceID, 7, '')
+  Write-Host ('Microsoft Update service enabled: {0}' -f $service.ServiceID)
+} catch {
+  Write-Host ('Microsoft Update service registration skipped: ' + $_.Exception.Message)
+}
 $searcher = $session.CreateUpdateSearcher()
+$searcher.ServerSelection = 3
+$searcher.ServiceID = $serviceID
 $criteria = "IsInstalled=0 and IsHidden=0 and Type='Software'"
 Write-Host ('Searching Windows Update with criteria: ' + $criteria)
 $result = $searcher.Search($criteria)
@@ -2981,6 +2998,10 @@ for ($i = 0; $i -lt $result.Updates.Count; $i++) {
   $update = $result.Updates.Item($i)
   if (-not $update.EulaAccepted) {
     $update.AcceptEula()
+  }
+  if ($update.RebootRequiredBeforeInstallation) {
+    Write-Host ('Update requires a reboot before installation: {0}' -f $update.Title)
+    return
   }
   [void]$updates.Add($update)
   Write-Host ('Queued: {0}' -f $update.Title)
@@ -3009,18 +3030,30 @@ if ($installable.Count -eq 0) {
   throw 'Windows Update downloaded no installable updates.'
 }
 
-$installer = $session.CreateUpdateInstaller()
-$installer.Updates = $installable
-Write-Host 'Installing queued updates...'
-$installResult = $installer.Install()
-Write-Host ('Install result code: {0}' -f $installResult.ResultCode)
-Write-Host ('Reboot required: {0}' -f $installResult.RebootRequired)
 for ($i = 0; $i -lt $installable.Count; $i++) {
-  $itemResult = $installResult.GetUpdateResult($i)
-  Write-Host ('Install [{0}] {1}: {2} / HRESULT {3}' -f ($i + 1), $installable.Item($i).Title, $itemResult.ResultCode, ('0x{0:X8}' -f $itemResult.HResult))
-}
-if ($installResult.ResultCode -gt 3) {
-  throw ('Windows Update install failed with result code ' + $installResult.ResultCode)
+  if (Test-InitraPendingReboot) {
+    Write-Host 'A reboot is already pending. Initra will restart before installing more updates.'
+    return
+  }
+  $single = New-Object -ComObject Microsoft.Update.UpdateColl
+  [void]$single.Add($installable.Item($i))
+  $installer = $session.CreateUpdateInstaller()
+  $installer.Updates = $single
+  $installer.ForceQuiet = $true
+  $installer.AllowSourcePrompts = $false
+  Write-Host ('Installing update [{0}/{1}]: {2}' -f ($i + 1), $installable.Count, $installable.Item($i).Title)
+  $installResult = $installer.Install()
+  Write-Host ('Install result code: {0}' -f $installResult.ResultCode)
+  Write-Host ('Reboot required: {0}' -f $installResult.RebootRequired)
+  $itemResult = $installResult.GetUpdateResult(0)
+  Write-Host ('Install result: {0} / HRESULT {1}' -f $itemResult.ResultCode, ('0x{0:X8}' -f $itemResult.HResult))
+  if ($installResult.ResultCode -gt 3) {
+    throw ('Windows Update install failed with result code ' + $installResult.ResultCode)
+  }
+  if ($installResult.RebootRequired -or (Test-InitraPendingReboot)) {
+    Write-Host 'Windows Update requires a reboot. Initra will restart and continue afterwards.'
+    return
+  }
 }
 `
 	return runWindowsPowerShellScript(ctx, logger, script)
