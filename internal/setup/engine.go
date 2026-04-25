@@ -2304,14 +2304,38 @@ $winget = '%s'
 $license = '%s'
 $appRuntime = '%s'
 $dependencies = @($vclibs, $ui)
-Write-Host 'Installing WinGet dependencies for Windows LTSC/IoT...'
-foreach ($dependency in $dependencies) {
+function Test-AppxInstalled([string]$Name) {
+  return [bool](Get-AppxPackage -AllUsers -Name $Name -ErrorAction SilentlyContinue)
+}
+function Install-AppxDependency([string]$Name, [string]$Path, [string]$VerifyName) {
+  Write-Host ('Installing ' + $Name + '...')
   try {
-    Add-AppxPackage -Path $dependency -ErrorAction Stop
+    Add-AppxPackage -Path $Path -ErrorAction Stop
   } catch {
-    Write-Host ('Dependency install reported: ' + $_.Exception.Message)
+    $message = $_.Exception.Message
+    if ($message -match '0x80073D06|higher version|already installed') {
+      Write-Host ($Name + ' is already present: ' + $message)
+    } else {
+      throw ($Name + ' install failed: ' + $message)
+    }
+  }
+  try {
+    Add-AppxProvisionedPackage -Online -PackagePath $Path -SkipLicense -ErrorAction Stop | Out-String | Write-Host
+  } catch {
+    $message = $_.Exception.Message
+    if ($message -match '0x80073D06|higher version|already installed') {
+      Write-Host ($Name + ' is already provisioned: ' + $message)
+    } else {
+      Write-Host ($Name + ' provisioning reported: ' + $message)
+    }
+  }
+  if (-not (Test-AppxInstalled $VerifyName)) {
+    throw ($Name + ' was not detected after installation.')
   }
 }
+Write-Host 'Installing WinGet dependencies for Windows LTSC/IoT...'
+Install-AppxDependency 'Microsoft VCLibs Desktop framework' $vclibs 'Microsoft.VCLibs.140.00*'
+Install-AppxDependency 'Microsoft UI Xaml 2.8' $ui 'Microsoft.UI.Xaml.2.8*'
 Write-Host 'Installing Windows App SDK Runtime 1.8 for Desktop App Installer...'
 & $appRuntime --quiet --force
 $appRuntimeExit = $LASTEXITCODE
@@ -2326,7 +2350,7 @@ if (($appRuntimeExit -ne 0) -and ($appRuntimeExit -ne 3010)) {
 }
 Write-Host 'Installing WinGet Desktop App Installer package...'
 try {
-  Add-AppxPackage -Path $winget -ErrorAction Stop
+  Add-AppxPackage -Path $winget -DependencyPath $dependencies -ErrorAction Stop
 } catch {
   Write-Host ('Add-AppxPackage failed: ' + $_.Exception.Message)
 }
@@ -2336,6 +2360,17 @@ try {
 } catch {
   Write-Host ('Provisioning with dependency paths failed: ' + $_.Exception.Message)
   Add-AppxProvisionedPackage -Online -PackagePath $winget -LicensePath $license -ErrorAction Stop | Out-String | Write-Host
+}
+try {
+  Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction Stop
+} catch {
+  Write-Host ('Desktop App Installer current-user registration reported: ' + $_.Exception.Message)
+}
+for ($attempt = 0; $attempt -lt 12; $attempt++) {
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    break
+  }
+  Start-Sleep -Seconds 5
 }
 `, vclibsPath, uiPath, msixPath, licensePath, appRuntimePath)
 	if err := runProcess(ctx, env, logger, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script); err != nil {
