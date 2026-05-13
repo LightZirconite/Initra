@@ -1,6 +1,11 @@
 package setup
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,12 +70,43 @@ func TestLoadCatalog(t *testing.T) {
 	if _, ok := catalog.itemByID("noisetorch"); !ok {
 		t.Fatalf("expected noisetorch item in catalog")
 	}
+	intelDSA, ok := catalog.itemByID("intel-driver-support-assistant")
+	if !ok {
+		t.Fatalf("expected intel-driver-support-assistant item in catalog")
+	}
+	if intelDSA.Install["windows"].Methods[0].Package != "Intel.IntelDriverAndSupportAssistant" {
+		t.Fatalf("expected Intel DSA to install through the Winget package first")
+	}
+	amdSoftware, ok := catalog.itemByID("amd-software")
+	if !ok {
+		t.Fatalf("expected amd-software item in catalog")
+	}
+	if amdSoftware.Install["windows"].Methods[0].Package != "AMD.AMDSoftwareCloudEdition" {
+		t.Fatalf("expected AMD Software to install through Winget")
+	}
+	nvidiaExperience, ok := catalog.itemByID("nvidia-geforce-experience")
+	if !ok {
+		t.Fatalf("expected nvidia-geforce-experience item in catalog")
+	}
+	if nvidiaExperience.Install["windows"].Methods[0].Package != "Nvidia.GeForceExperience" {
+		t.Fatalf("expected NVIDIA GeForce Experience to install through Winget")
+	}
 	firstRun, ok := catalog.itemByID("first-run-apps")
 	if !ok {
 		t.Fatalf("expected first-run-apps item in catalog")
 	}
 	if !firstRun.AutoApply {
 		t.Fatalf("expected first-run-apps to be auto_apply")
+	}
+}
+
+func TestLoadCatalogFallsBackToEmbeddedCatalog(t *testing.T) {
+	catalog, err := loadCatalog(filepath.Join(t.TempDir(), "missing-catalog.yaml"))
+	if err != nil {
+		t.Fatalf("loadCatalog() embedded fallback error = %v", err)
+	}
+	if _, ok := catalog.itemByID("driver-refresh"); !ok {
+		t.Fatalf("expected embedded catalog fallback to include driver-refresh")
 	}
 }
 
@@ -409,6 +445,92 @@ func TestSessionReportSerialization(t *testing.T) {
 	}
 	if !strings.Contains(text, `"item_id": "firefox"`) {
 		t.Fatalf("expected serialized step result, got %s", text)
+	}
+}
+
+func TestSendDiscordErrorWebhookRedactsWebhookURL(t *testing.T) {
+	var payload discordWebhookPayload
+	attached := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(16 << 20); err != nil {
+				t.Fatalf("parse multipart webhook payload: %v", err)
+			}
+			if err := json.Unmarshal([]byte(r.FormValue("payload_json")), &payload); err != nil {
+				t.Fatalf("decode multipart payload_json: %v", err)
+			}
+			for _, headers := range r.MultipartForm.File {
+				for _, header := range headers {
+					file, err := header.Open()
+					if err != nil {
+						t.Fatalf("open multipart file: %v", err)
+					}
+					data, err := io.ReadAll(file)
+					_ = file.Close()
+					if err != nil {
+						t.Fatalf("read multipart file: %v", err)
+					}
+					attached[header.Filename] = string(data)
+				}
+			}
+		} else if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode webhook payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	tmp := t.TempDir()
+	reportPath := filepath.Join(tmp, "report.json")
+	logPath := filepath.Join(tmp, "initra.log")
+	if err := os.WriteFile(reportPath, []byte(`{"status":"error"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("full installer log"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := SessionReport{
+		Status:     "error",
+		Error:      "installer failed; see https://discord.com/api/webhooks/123/secret",
+		ReportPath: reportPath,
+		LogPath:    logPath,
+		StepResults: []StepResult{
+			{
+				ItemID:   "broken",
+				ItemName: "Broken Installer",
+				Outcome:  stepOutcomeFailed,
+				Error:    "failed",
+			},
+		},
+	}
+	env := Environment{
+		OS:       "windows",
+		Arch:     "amd64",
+		Hostname: "desk-01",
+		UserName: "tech",
+		Windows:  WindowsInfo{ProductName: "Windows 11 Pro"},
+	}
+
+	if err := sendDiscordErrorWebhook(context.Background(), server.URL, env, report); err != nil {
+		t.Fatalf("sendDiscordErrorWebhook() error = %v", err)
+	}
+	if payload.Content == "" || len(payload.Embeds) != 1 {
+		t.Fatalf("unexpected webhook payload: %+v", payload)
+	}
+	if strings.Contains(payload.Embeds[0].Description, "123/secret") {
+		t.Fatalf("expected webhook URL secret to be redacted, got %q", payload.Embeds[0].Description)
+	}
+	if !strings.Contains(payload.Embeds[0].Description, "[discord-webhook-redacted]") {
+		t.Fatalf("expected redaction marker, got %q", payload.Embeds[0].Description)
+	}
+	if attached["report.json"] != `{"status":"error"}` {
+		t.Fatalf("expected report attachment, got %+v", attached)
+	}
+	if attached["initra.log"] != "full installer log" {
+		t.Fatalf("expected log attachment, got %+v", attached)
 	}
 }
 

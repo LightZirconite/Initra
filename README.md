@@ -38,6 +38,17 @@ Preset notes:
 - `personal` is the broader personal preset.
 - `light` is still accepted as a backward-compatible alias for `personal`.
 
+Discord error reporting:
+
+Initra sends a Discord notification automatically when an install step fails. The notification includes the failing step, machine/OS label, local log path, local report path, and attaches the report/log files when Discord accepts their size. Profile inputs such as passwords and tokens are redacted in reports.
+
+Set `INITRA_ERROR_WEBHOOK_URL` before launching Initra only when you want to override the built-in webhook for a test channel or another workspace.
+
+```powershell
+$env:INITRA_ERROR_WEBHOOK_URL = "https://discord.com/api/webhooks/..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1')))"
+```
+
 ## What To Publish
 
 Publish the `releases/` folder after running `build-release.bat`.

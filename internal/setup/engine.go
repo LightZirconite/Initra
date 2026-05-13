@@ -755,6 +755,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 		report.Error = err.Error()
 		report.FinishedAt = time.Now()
 		_ = saveSessionReport(reportPath, &report)
+		notifySessionError(ctx, env, report, logger)
 		cleanupInterruptedSession(paths, logger)
 		return err
 	}
@@ -810,6 +811,7 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 			report.Error = fmt.Sprintf("%s prerequisites: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(reportPath, &report)
+			notifySessionError(ctx, env, report, logger)
 			printFinalSessionScreen(report, interactive)
 			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("%s prerequisites: %w", step.Item.Name, err)
@@ -830,12 +832,14 @@ func executePlan(ctx context.Context, plan Plan, paths Paths, env Environment, l
 				if saveErr := saveSessionReport(reportPath, &report); saveErr != nil {
 					return saveErr
 				}
+				notifySessionError(ctx, env, report, logger)
 				continue
 			}
 			report.Status = "error"
 			report.Error = fmt.Sprintf("%s: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(reportPath, &report)
+			notifySessionError(ctx, env, report, logger)
 			printFinalSessionScreen(report, interactive)
 			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("%s: %w", step.Item.Name, err)
@@ -932,6 +936,11 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 	}
 	defer stopHostedSession()
 	if err := waitForNetwork(ctx, logger, state.BaseURL); err != nil {
+		report.Status = "error"
+		report.Error = err.Error()
+		report.FinishedAt = time.Now()
+		_ = saveSessionReport(state.ReportPath, &report)
+		notifySessionError(ctx, env, report, logger)
 		cleanupInterruptedSession(paths, logger)
 		return err
 	}
@@ -972,6 +981,7 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 			report.Error = fmt.Sprintf("resume %s prerequisites: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(state.ReportPath, &report)
+			notifySessionError(ctx, env, report, logger)
 			printFinalSessionScreen(report, interactive)
 			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("resume %s prerequisites: %w", step.Item.Name, err)
@@ -992,12 +1002,14 @@ func resumeExecution(ctx context.Context, paths Paths, env Environment, logger *
 				if saveErr := saveSessionReport(state.ReportPath, &report); saveErr != nil {
 					return saveErr
 				}
+				notifySessionError(ctx, env, report, logger)
 				continue
 			}
 			report.Status = "error"
 			report.Error = fmt.Sprintf("resume %s: %v", step.Item.Name, err)
 			report.FinishedAt = time.Now()
 			_ = saveSessionReport(state.ReportPath, &report)
+			notifySessionError(ctx, env, report, logger)
 			printFinalSessionScreen(report, interactive)
 			cleanupInterruptedSession(paths, logger)
 			return fmt.Errorf("resume %s: %w", step.Item.Name, err)
@@ -3243,10 +3255,20 @@ if ($driverUpdates) {
 			_ = runWingetAction(ctx, env, logger, "HPInc.HPSupportAssistant", stepActionInstall)
 		}
 		if strings.Contains(strings.ToLower(env.Windows.CPUVendor), "intel") || strings.Contains(strings.ToLower(env.Windows.GPUVendor), "intel") {
-			_ = runWingetAction(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant", stepActionInstall)
+			if commandExists("winget") {
+				_ = runWingetAction(ctx, env, logger, "Intel.IntelDriverAndSupportAssistant", stepActionInstall)
+			} else {
+				_ = runDirectInstall(ctx, env, logger, Method{
+					URL:      "https://dsadata.intel.com/installer",
+					FileName: "Intel-Driver-Support-Assistant-Installer.exe",
+				}, nil)
+			}
 		}
 		if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "amd") {
 			_ = runWingetAction(ctx, env, logger, "AMD.AMDSoftwareCloudEdition", stepActionInstall)
+		}
+		if strings.Contains(strings.ToLower(env.Windows.GPUVendor), "nvidia") {
+			_ = runWingetAction(ctx, env, logger, "Nvidia.GeForceExperience", stepActionInstall)
 		}
 	}
 	_ = maybeInstallSteamDeckLCDDrivers(ctx, env, logger, interactive)

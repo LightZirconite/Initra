@@ -1083,11 +1083,12 @@ items:
   - id: driver-refresh
     name: Driver Refresh
     category: maintenance
-    description: Best-effort OEM and firmware helper flow.
+    description: Best-effort Microsoft Update, OEM and GPU helper flow.
     platforms: [windows, linux]
     requires_admin: true
     notes:
-      - "Windows first asks Microsoft Update for driver updates, then tries OEM helper tools when they are relevant."
+      - "Windows first asks Microsoft Update for driver updates, then tries OEM and GPU helper tools when they are relevant."
+      - "GPU helpers include Intel Driver & Support Assistant on Intel systems, AMD Software on AMD GPUs and NVIDIA GeForce Experience on NVIDIA GPUs."
       - "Driver automation quality still depends on the hardware vendor and what they publish."
     install:
       windows:
@@ -1098,6 +1099,66 @@ items:
         methods:
           - type: builtin
             action: driver_refresh
+
+  - id: intel-driver-support-assistant
+    name: Intel Driver & Support Assistant
+    category: maintenance
+    description: Intel's driver detection and support assistant.
+    platforms: [windows]
+    notes:
+      - "Also attempted automatically by Driver Refresh when Intel CPU or GPU hardware is detected."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Intel.IntelDriverAndSupportAssistant -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Intel.IntelDriverAndSupportAssistant
+            requires: [windows]
+          - type: direct
+            url: "https://dsadata.intel.com/installer"
+            filename: "Intel-Driver-Support-Assistant-Installer.exe"
+            arguments: []
+            requires: [windows, no-winget]
+
+  - id: amd-software
+    name: AMD Software
+    category: maintenance
+    description: AMD Software helper for Radeon driver detection and updates.
+    platforms: [windows]
+    notes:
+      - "Also attempted automatically by Driver Refresh when AMD GPU hardware is detected."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id AMD.AMDSoftwareCloudEdition -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: AMD.AMDSoftwareCloudEdition
+            requires: [windows]
+
+  - id: nvidia-geforce-experience
+    name: NVIDIA GeForce Experience
+    category: maintenance
+    description: NVIDIA's legacy driver and game settings assistant.
+    platforms: [windows]
+    notes:
+      - "NVIDIA App is the newer replacement, but it is not consistently available through Winget yet. This keeps the available Winget path."
+      - "Also attempted automatically by Driver Refresh when NVIDIA GPU hardware is detected."
+    detect:
+      windows:
+        any:
+          - "winget list --disable-interactivity --id Nvidia.GeForceExperience -e"
+    install:
+      windows:
+        methods:
+          - type: winget
+            package: Nvidia.GeForceExperience
+            requires: [windows]
 
   - id: steamdeck-graphics-driver-block
     name: Block Steam Deck Graphics Driver Updates
