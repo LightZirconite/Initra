@@ -11,13 +11,7 @@ Cross-platform workstation bootstrapper for Windows and Linux.
 Windows `Win+R`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1')))"
-```
-
-Windows `Win+R` with preset `personal`:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1'))) --preset personal"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1' | iex"
 ```
 
 Linux:
@@ -25,18 +19,6 @@ Linux:
 ```bash
 curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh
 ```
-
-Linux with preset `personal`:
-
-```bash
-curl -fsSL https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.sh | sh -s -- --preset personal
-```
-
-Preset notes:
-
-- `generic` is the neutral base setup.
-- `personal` is the broader personal preset.
-- `light` is still accepted as a backward-compatible alias for `personal`.
 
 Discord error reporting:
 
@@ -46,7 +28,7 @@ Set `INITRA_ERROR_WEBHOOK_URL` before launching Initra only when you want to ove
 
 ```powershell
 $env:INITRA_ERROR_WEBHOOK_URL = "https://discord.com/api/webhooks/..."
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([ScriptBlock]::Create((Invoke-RestMethod 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1')))"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://git.justw.tf/LightZirconite/setup-win/raw/branch/main/releases/install.ps1' | iex"
 ```
 
 ## What To Publish
